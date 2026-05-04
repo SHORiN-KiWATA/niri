@@ -175,6 +175,41 @@ impl MergeWith<ClipboardPart> for Clipboard {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Magnifier {
+    pub off: bool,
+    pub zoom_factor: f64,
+}
+
+impl Default for Magnifier {
+    fn default() -> Self {
+        Self {
+            off: false,
+            zoom_factor: 2.0,
+        }
+    }
+}
+
+#[derive(knuffel::Decode, Debug, Clone, PartialEq)]
+pub struct MagnifierPart {
+    #[knuffel(child)]
+    pub off: bool,
+    #[knuffel(child)]
+    pub on: bool,
+    #[knuffel(child, unwrap(argument))]
+    pub zoom_factor: Option<FloatOrInt<0, { i32::MAX }>>,
+}
+
+impl MergeWith<MagnifierPart> for Magnifier {
+    fn merge_with(&mut self, part: &MagnifierPart) {
+        self.off |= part.off;
+        if part.on {
+            self.off = false;
+        }
+        merge!((self, part), zoom_factor);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Overview {
     pub zoom: f64,
     pub backdrop_color: Color,

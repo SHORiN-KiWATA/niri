@@ -83,6 +83,7 @@ pub struct Config {
     pub blur: Blur,
     pub gestures: Gestures,
     pub overview: Overview,
+    pub magnifier: Magnifier,
     pub environment: Environment,
     pub xwayland_satellite: XwaylandSatellite,
     pub window_rules: Vec<WindowRule>,
@@ -200,6 +201,7 @@ where
                 "blur" => m_merge!(blur),
                 "gestures" => m_merge!(gestures),
                 "overview" => m_merge!(overview),
+                "magnifier" => m_merge!(magnifier),
                 "xwayland-satellite" => m_merge!(xwayland_satellite),
                 "switch-events" => m_merge!(switch_events),
                 "debug" => m_merge!(debug),
@@ -1482,6 +1484,14 @@ mod tests {
                 hide_after_inactive_ms: Some(
                     3000,
                 ),
+                shake_to_enlarge: Some(
+                    ShakeToEnlarge {
+                        off: false,
+                        zoom_factor: 3.0,
+                        hold_duration_ms: 2000,
+                        sensitivity: 1.0,
+                    },
+                ),
             },
             screenshot_path: ScreenshotPath(
                 Some(
@@ -1625,6 +1635,18 @@ mod tests {
                         ),
                     },
                 ),
+                magnifier: MagnifierAnim(
+                    Animation {
+                        off: false,
+                        kind: Spring(
+                            SpringParams {
+                                damping_ratio: 1.0,
+                                stiffness: 800,
+                                epsilon: 0.0001,
+                            },
+                        ),
+                    },
+                ),
                 recent_windows_close: RecentWindowsCloseAnim(
                     Animation {
                         off: true,
@@ -1633,6 +1655,18 @@ mod tests {
                                 damping_ratio: 1.0,
                                 stiffness: 800,
                                 epsilon: 0.001,
+                            },
+                        ),
+                    },
+                ),
+                cursor_enlarge: CursorEnlargeAnim(
+                    Animation {
+                        off: false,
+                        kind: Spring(
+                            SpringParams {
+                                damping_ratio: 0.82,
+                                stiffness: 400,
+                                epsilon: 0.0001,
                             },
                         ),
                     },
@@ -1691,6 +1725,10 @@ mod tests {
                         a: 0.3137255,
                     },
                 },
+            },
+            magnifier: Magnifier {
+                off: false,
+                zoom_factor: 2.0,
             },
             environment: Environment(
                 [

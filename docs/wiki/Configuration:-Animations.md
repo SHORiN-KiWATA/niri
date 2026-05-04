@@ -59,6 +59,10 @@ animations {
         spring damping-ratio=1.0 stiffness=800 epsilon=0.0001
     }
 
+    magnifier {
+        spring damping-ratio=1.0 stiffness=800 epsilon=0.0001
+    }
+
     recent-windows-close {
         spring damping-ratio=1.0 stiffness=800 epsilon=0.001
     }
@@ -421,6 +425,20 @@ The open/close zoom animation of the [Overview](./Overview.md).
 ```kdl
 animations {
     overview-open-close {
+        spring damping-ratio=1.0 stiffness=800 epsilon=0.0001
+    }
+}
+```
+
+#### `magnifier`
+
+<sup>Since: 26.04</sup>
+
+The toggle zoom animation of the [screen magnifier](./Configuration:-Miscellaneous.md#magnifier).
+
+```kdl
+animations {
+    magnifier {
         spring damping-ratio=1.0 stiffness=800 epsilon=0.0001
     }
 }

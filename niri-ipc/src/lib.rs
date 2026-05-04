@@ -910,6 +910,14 @@ pub enum Action {
     },
     /// Toggle (open/close) the Overview.
     ToggleOverview {},
+    /// Toggle the screen magnifier.
+    ToggleMagnifier {},
+    /// Adjust screen magnifier zoom factor.
+    AdjustMagnifierZoom {
+        /// Amount to adjust the zoom factor by (positive = zoom in, negative = zoom out).
+        #[cfg_attr(feature = "clap", arg(allow_hyphen_values = true))]
+        delta: f64,
+    },
     /// Open the Overview.
     OpenOverview {},
     /// Close the Overview.

@@ -277,6 +277,11 @@ pub struct Niri {
     pub pointer_enlarged_until: Option<std::time::Instant>,
     pub pointer_scale_animation: Option<crate::animation::Animation>,
 
+    // Magnifier
+    pub magnifier_active: bool,
+    pub magnifier_zoom: f64,
+    pub magnifier_animation: Option<crate::animation::Animation>,
+
     // Smithay state.
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
@@ -2488,6 +2493,7 @@ impl Niri {
             )
             .unwrap();
 
+        let magnifier_zoom_factor = config_.magnifier.zoom_factor;
         drop(config_);
         let mut niri = Self {
             config,
@@ -2527,6 +2533,10 @@ impl Niri {
             pointer_last_time: None,
             pointer_enlarged_until: None,
             pointer_scale_animation: None,
+
+            magnifier_active: false,
+            magnifier_zoom: magnifier_zoom_factor,
+            magnifier_animation: None,
 
             compositor_state,
             xdg_shell_state,
@@ -3744,6 +3754,69 @@ impl Niri {
         }
     }
 
+    pub fn toggle_magnifier(&mut self) {
+        let (off, zoom_factor, anim_config) = {
+            let config = self.config.borrow();
+            (config.magnifier.off, config.magnifier.zoom_factor, config.animations.magnifier.0)
+        };
+        if off {
+            return;
+        }
+        self.magnifier_active = !self.magnifier_active;
+
+        let from = self.magnifier_animation.as_ref().map_or(
+            if self.magnifier_active { 1. } else { self.magnifier_zoom },
+            |a| a.value(),
+        );
+        let to = if self.magnifier_active {
+            self.magnifier_zoom = zoom_factor;
+            self.magnifier_zoom
+        } else {
+            1.
+        };
+
+        self.magnifier_animation = Some(crate::animation::Animation::new(
+            self.clock.clone(),
+            from,
+            to,
+            0.,
+            anim_config,
+        ));
+        self.queue_redraw_all();
+    }
+
+    pub fn update_magnifier_animation(&mut self) {
+        if let Some(anim) = &self.magnifier_animation {
+            if anim.is_done() {
+                self.magnifier_animation = None;
+            }
+        }
+    }
+
+    pub fn adjust_magnifier_zoom(&mut self, delta: f64) {
+        let off = {
+            let config = self.config.borrow();
+            config.magnifier.off
+        };
+        if off {
+            return;
+        }
+
+        if !self.magnifier_active {
+            self.magnifier_active = true;
+            self.magnifier_zoom = 1.0;
+        }
+
+        self.magnifier_zoom = (self.magnifier_zoom + delta).clamp(1.0, 10.0);
+        if self.magnifier_zoom <= 1.0 {
+            self.magnifier_active = false;
+            self.magnifier_zoom = 1.0;
+        }
+
+        self.magnifier_animation = None;
+        self.queue_redraw_all();
+    }
+
     /// Schedules an immediate redraw on all outputs if one is not already scheduled.
     pub fn queue_redraw_all(&mut self) {
         for state in self.output_state.values_mut() {
@@ -4270,6 +4343,43 @@ impl Niri {
         self.render(ctx, output, include_pointer, &mut |elem| {
             elements.push(elem)
         });
+
+        // Apply screen magnifier zoom.
+        let config = self.config.borrow();
+        let magnifier_anim_ongoing = self.magnifier_animation.as_ref().map(|a| !a.is_done()).unwrap_or(false);
+        let magnifier_zoom = if !config.magnifier.off && (self.magnifier_active || magnifier_anim_ongoing) {
+            let zoom = if magnifier_anim_ongoing {
+                self.magnifier_animation.as_ref().unwrap().value()
+            } else {
+                self.magnifier_zoom
+            };
+            if (zoom - 1.0).abs() > 0.001 {
+                let pointer_pos = self
+                    .tablet_cursor_location
+                    .unwrap_or_else(|| self.seat.get_pointer().unwrap().current_location());
+                let output_pos = self.global_space.output_geometry(output).unwrap().loc;
+                let pointer_on_output = pointer_pos - output_pos.to_f64();
+                let output_scale = Scale::from(output.current_scale().fractional_scale());
+                let pivot = pointer_on_output.to_physical_precise_round(output_scale);
+                Some((zoom, pivot))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some((zoom, pivot)) = magnifier_zoom {
+            elements = elements
+                .into_iter()
+                .map(|elem| {
+                    let rescaled =
+                        RescaleRenderElement::from_element(Box::new(elem), pivot, zoom);
+                    OutputRenderElements::Magnified(rescaled)
+                })
+                .collect();
+        }
+
         elements
     }
 
@@ -4710,8 +4820,10 @@ impl Niri {
         if self.monitors_active {
             // Check if shake-to-enlarge hold duration expired and update animation.
             self.update_pointer_scale_animation();
+            self.update_magnifier_animation();
             let pointer_anim_ongoing = self.pointer_scale_animation.as_ref().map(|a| !a.is_done()).unwrap_or(false)
                 || self.pointer_enlarged_until.map(|t| std::time::Instant::now() < t).unwrap_or(false);
+            let magnifier_anim_ongoing = self.magnifier_animation.as_ref().map(|a| !a.is_done()).unwrap_or(false);
 
             let state = self.output_state.get_mut(output).unwrap();
             state.unfinished_animations_remain = self.layout.are_animations_ongoing(Some(output));
@@ -4728,6 +4840,7 @@ impl Niri {
                 .is_current_cursor_animated(output.current_scale().integer_scale());
 
             state.unfinished_animations_remain |= pointer_anim_ongoing;
+            state.unfinished_animations_remain |= magnifier_anim_ongoing;
 
             // Also check layer surfaces.
             if !state.unfinished_animations_remain {
@@ -6649,5 +6762,132 @@ niri_render_elements! {
         Texture = PrimaryGpuTextureRenderElement,
         // Used for the CPU-rendered panels.
         RelocatedMemoryBuffer = RelocateRenderElement<MemoryRenderBufferRenderElement<R>>,
+        Magnified = RescaleRenderElement<Box<OutputRenderElements<R>>>,
+    }
+}
+
+impl<R: NiriRenderer> smithay::backend::renderer::element::Element
+    for Box<OutputRenderElements<R>>
+{
+    fn id(&self) -> &smithay::backend::renderer::element::Id { (**self).id() }
+
+    fn current_commit(
+        &self,
+    ) -> smithay::backend::renderer::utils::CommitCounter {
+        (**self).current_commit()
+    }
+
+    fn geometry(
+        &self,
+        scale: smithay::utils::Scale<f64>,
+    ) -> smithay::utils::Rectangle<i32, smithay::utils::Physical> {
+        (**self).geometry(scale)
+    }
+
+    fn transform(&self) -> smithay::utils::Transform { (**self).transform() }
+
+    fn src(
+        &self,
+    ) -> smithay::utils::Rectangle<f64, smithay::utils::Buffer> {
+        (**self).src()
+    }
+
+    fn damage_since(
+        &self,
+        scale: smithay::utils::Scale<f64>,
+        commit: Option<smithay::backend::renderer::utils::CommitCounter>,
+    ) -> smithay::backend::renderer::utils::DamageSet<i32, smithay::utils::Physical> {
+        (**self).damage_since(scale, commit)
+    }
+
+    fn opaque_regions(
+        &self,
+        scale: smithay::utils::Scale<f64>,
+    ) -> smithay::backend::renderer::utils::OpaqueRegions<i32, smithay::utils::Physical> {
+        (**self).opaque_regions(scale)
+    }
+
+    fn alpha(&self) -> f32 { (**self).alpha() }
+
+    fn kind(&self) -> smithay::backend::renderer::element::Kind { (**self).kind() }
+
+    fn is_framebuffer_effect(&self) -> bool { (**self).is_framebuffer_effect() }
+}
+
+impl
+    smithay::backend::renderer::element::RenderElement<
+        smithay::backend::renderer::gles::GlesRenderer,
+    > for Box<OutputRenderElements<smithay::backend::renderer::gles::GlesRenderer>>
+{
+    fn capture_framebuffer(
+        &self,
+        frame: &mut smithay::backend::renderer::gles::GlesFrame<'_, '_>,
+        src: smithay::utils::Rectangle<f64, smithay::utils::Buffer>,
+        dst: smithay::utils::Rectangle<i32, smithay::utils::Physical>,
+        cache: &smithay::utils::user_data::UserDataMap,
+    ) -> Result<(), smithay::backend::renderer::gles::GlesError> {
+        smithay::backend::renderer::element::RenderElement::<
+            smithay::backend::renderer::gles::GlesRenderer,
+        >::capture_framebuffer(&**self, frame, src, dst, cache)
+    }
+
+    fn draw(
+        &self,
+        frame: &mut smithay::backend::renderer::gles::GlesFrame<'_, '_>,
+        src: smithay::utils::Rectangle<f64, smithay::utils::Buffer>,
+        dst: smithay::utils::Rectangle<i32, smithay::utils::Physical>,
+        damage: &[smithay::utils::Rectangle<i32, smithay::utils::Physical>],
+        opaque_regions: &[smithay::utils::Rectangle<i32, smithay::utils::Physical>],
+        cache: Option<&smithay::utils::user_data::UserDataMap>,
+    ) -> Result<(), smithay::backend::renderer::gles::GlesError> {
+        smithay::backend::renderer::element::RenderElement::<
+            smithay::backend::renderer::gles::GlesRenderer,
+        >::draw(&**self, frame, src, dst, damage, opaque_regions, cache)
+    }
+
+    fn underlying_storage(
+        &self,
+        renderer: &mut smithay::backend::renderer::gles::GlesRenderer,
+    ) -> Option<smithay::backend::renderer::element::UnderlyingStorage<'_>> {
+        (**self).underlying_storage(renderer)
+    }
+}
+
+impl<'render>
+    smithay::backend::renderer::element::RenderElement<
+        crate::backend::tty::TtyRenderer<'render>,
+    > for Box<OutputRenderElements<crate::backend::tty::TtyRenderer<'render>>>
+{
+    fn capture_framebuffer(
+        &self,
+        frame: &mut crate::backend::tty::TtyFrame<'render, '_, '_>,
+        src: smithay::utils::Rectangle<f64, smithay::utils::Buffer>,
+        dst: smithay::utils::Rectangle<i32, smithay::utils::Physical>,
+        cache: &smithay::utils::user_data::UserDataMap,
+    ) -> Result<(), crate::backend::tty::TtyRendererError<'render>> {
+        smithay::backend::renderer::element::RenderElement::<
+            crate::backend::tty::TtyRenderer<'render>,
+        >::capture_framebuffer(&**self, frame, src, dst, cache)
+    }
+
+    fn draw(
+        &self,
+        frame: &mut crate::backend::tty::TtyFrame<'render, '_, '_>,
+        src: smithay::utils::Rectangle<f64, smithay::utils::Buffer>,
+        dst: smithay::utils::Rectangle<i32, smithay::utils::Physical>,
+        damage: &[smithay::utils::Rectangle<i32, smithay::utils::Physical>],
+        opaque_regions: &[smithay::utils::Rectangle<i32, smithay::utils::Physical>],
+        cache: Option<&smithay::utils::user_data::UserDataMap>,
+    ) -> Result<(), crate::backend::tty::TtyRendererError<'render>> {
+        smithay::backend::renderer::element::RenderElement::<
+            crate::backend::tty::TtyRenderer<'render>,
+        >::draw(&**self, frame, src, dst, damage, opaque_regions, cache)
+    }
+
+    fn underlying_storage(
+        &self,
+        renderer: &mut crate::backend::tty::TtyRenderer<'render>,
+    ) -> Option<smithay::backend::renderer::element::UnderlyingStorage<'_>> {
+        (**self).underlying_storage(renderer)
     }
 }

@@ -2271,6 +2271,13 @@ impl State {
             Action::StopCast(session_id) => {
                 self.niri.stop_cast(CastSessionId::from(session_id));
             }
+            Action::ToggleMagnifier => {
+                self.niri.toggle_magnifier();
+                self.niri.queue_redraw_all();
+            }
+            Action::AdjustMagnifierZoom(delta) => {
+                self.niri.adjust_magnifier_zoom(delta);
+            }
             Action::ToggleOverview => {
                 self.niri.layout.toggle_overview();
                 self.niri.queue_redraw_all();

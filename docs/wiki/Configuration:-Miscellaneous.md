@@ -68,6 +68,11 @@ blur {
     noise 0.02
     saturation 1.5
 }
+
+magnifier {
+    // off
+    zoom-factor 2.0
+}
 ```
 
 ### `spawn-at-startup`
@@ -459,3 +464,37 @@ blur {
     saturation 1.5
 }
 ```
+
+### `magnifier`
+
+Settings for the screen magnifier. Pressing a keyboard shortcut or scrolling a keybind can zoom in on the screen, with the cursor position as the zoom pivot.
+
+Set the `off` flag to completely disable the magnifier.
+
+```kdl
+magnifier {
+    off
+}
+```
+
+#### `zoom-factor`
+
+The zoom factor to use when toggling the magnifier on with a keyboard shortcut. Defaults to `2.0`.
+
+```kdl
+magnifier {
+    zoom-factor 2.5
+}
+```
+
+The toggle animation can be customized in the [`animations`](./Configuration:-Animations.md) section under `magnifier`:
+
+```kdl
+animations {
+    magnifier {
+        spring damping-ratio=1.0 stiffness=800 epsilon=0.0001
+    }
+}
+```
+
+For key bindings, see [`toggle-magnifier`](./Configuration:-Key-Bindings.md#toggle-magnifier) and [`adjust-magnifier-zoom`](./Configuration:-Key-Bindings.md#adjust-magnifier-zoom).
