@@ -75,7 +75,7 @@ impl Default for Cursor {
             xcursor_size: 24,
             hide_when_typing: false,
             hide_after_inactive_ms: None,
-            shake_to_enlarge: None,
+            shake_to_enlarge: Some(ShakeToEnlarge::default()),
         }
     }
 }
