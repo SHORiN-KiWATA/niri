@@ -1488,7 +1488,7 @@ mod tests {
                     ShakeToEnlarge {
                         off: false,
                         zoom_factor: 3.0,
-                        hold_duration_ms: 2000,
+                        hold_duration_ms: 1200,
                         sensitivity: 1.0,
                     },
                 ),

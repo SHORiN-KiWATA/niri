@@ -281,6 +281,7 @@ pub struct Niri {
     pub magnifier_active: bool,
     pub magnifier_zoom: f64,
     pub magnifier_animation: Option<crate::animation::Animation>,
+    pub magnifier_capture: Cell<bool>,
 
     // Smithay state.
     pub compositor_state: CompositorState,
@@ -2537,6 +2538,7 @@ impl Niri {
             magnifier_active: false,
             magnifier_zoom: magnifier_zoom_factor,
             magnifier_animation: None,
+            magnifier_capture: Cell::new(false),
 
             compositor_state,
             xdg_shell_state,
@@ -4344,43 +4346,43 @@ impl Niri {
             elements.push(elem)
         });
 
-        // Apply screen magnifier zoom.
-        let config = self.config.borrow();
-        let magnifier_anim_ongoing = self.magnifier_animation.as_ref().map(|a| !a.is_done()).unwrap_or(false);
-        let magnifier_zoom = if !config.magnifier.off && (self.magnifier_active || magnifier_anim_ongoing) {
-            let zoom = if magnifier_anim_ongoing {
-                self.magnifier_animation.as_ref().unwrap().value()
-            } else {
-                self.magnifier_zoom
-            };
-            if (zoom - 1.0).abs() > 0.001 {
-                let pointer_pos = self
-                    .tablet_cursor_location
-                    .unwrap_or_else(|| self.seat.get_pointer().unwrap().current_location());
-                let output_pos = self.global_space.output_geometry(output).unwrap().loc;
-                let pointer_on_output = pointer_pos - output_pos.to_f64();
-                let output_scale = Scale::from(output.current_scale().fractional_scale());
-                let pivot = pointer_on_output.to_physical_precise_round(output_scale);
-                Some((zoom, pivot))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        if let Some((zoom, pivot)) = magnifier_zoom {
-            elements = elements
-                .into_iter()
-                .map(|elem| {
-                    let rescaled =
-                        RescaleRenderElement::from_element(Box::new(elem), pivot, zoom);
-                    OutputRenderElements::Magnified(rescaled)
-                })
-                .collect();
-        }
-
         elements
+    }
+
+    fn compute_magnifier_params(
+        &self,
+        output: &Output,
+    ) -> Option<(f64, Point<i32, Physical>)> {
+        if self.magnifier_capture.get() {
+            return None;
+        }
+        let config = self.config.borrow();
+        if config.magnifier.off {
+            return None;
+        }
+        let magnifier_anim_ongoing = self.magnifier_animation.as_ref().map(|a| !a.is_done()).unwrap_or(false);
+        if !self.magnifier_active && !magnifier_anim_ongoing {
+            return None;
+        }
+        let zoom = if magnifier_anim_ongoing {
+            self.magnifier_animation.as_ref().unwrap().value()
+        } else {
+            self.magnifier_zoom
+        };
+        if (zoom - 1.0).abs() <= 0.001 {
+            return None;
+        }
+        let pointer_pos = self
+            .tablet_cursor_location
+            .unwrap_or_else(|| self.seat.get_pointer().unwrap().current_location());
+        let output_geo = self.global_space.output_geometry(output).unwrap();
+        if !output_geo.to_f64().contains(pointer_pos) {
+            return None;
+        }
+        let pointer_on_output = pointer_pos - output_geo.loc.to_f64();
+        let output_scale = Scale::from(output.current_scale().fractional_scale());
+        let pivot = pointer_on_output.to_physical_precise_round(output_scale);
+        Some((zoom, pivot))
     }
 
     pub fn render<R: NiriRenderer>(
@@ -4408,7 +4410,16 @@ impl Niri {
         let state = self.output_state.get(output).unwrap();
         ctx.xray = Some(&state.xray);
 
-        self.render_inner(ctx, output, include_pointer, push);
+        if let Some((zoom, pivot)) = self.compute_magnifier_params(output) {
+            let mut magnifier_push = |elem| {
+                let rescaled =
+                    RescaleRenderElement::from_element(Box::new(elem), pivot, zoom);
+                push(OutputRenderElements::Magnified(rescaled))
+            };
+            self.render_inner(ctx, output, include_pointer, &mut magnifier_push);
+        } else {
+            self.render_inner(ctx, output, include_pointer, push);
+        }
 
         self.clear_xray_elements(output);
     }
@@ -5709,7 +5720,9 @@ impl Niri {
                     target,
                     xray: None,
                 };
+                self.magnifier_capture.set(true);
                 let elements = self.render_to_vec(ctx, &output, false);
+                self.magnifier_capture.set(false);
                 let elements = elements.iter().rev();
 
                 let res = render_to_texture(
