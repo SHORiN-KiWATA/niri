@@ -2427,8 +2427,9 @@ impl State {
 
         let pos = pointer.current_location();
 
-        // We have an output, so we can compute the new location and focus.
         let mut new_pos = pos + event.delta();
+
+        self.niri.pointer_motion_absolute_shake(new_pos);
 
         // We received an event for the regular pointer, so show it now.
         self.niri.pointer_visibility = PointerVisibility::Visible;
@@ -2674,6 +2675,8 @@ impl State {
         let serial = SERIAL_COUNTER.next_serial();
 
         let pointer = self.niri.seat.get_pointer().unwrap();
+
+        self.niri.pointer_motion_absolute_shake(pos);
 
         if let Some(output) = self.niri.screenshot_ui.selection_output() {
             let geom = self.niri.global_space.output_geometry(output).unwrap();

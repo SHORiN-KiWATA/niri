@@ -22,6 +22,12 @@ cursor {
 
     hide-when-typing
     hide-after-inactive-ms 1000
+
+    shake-to-enlarge {
+        zoom-factor 2.5
+        hold-duration-ms 1500
+        sensitivity 1.2
+    }
 }
 
 overview {
@@ -195,6 +201,52 @@ cursor {
     hide-after-inactive-ms 1000
 }
 ```
+
+#### `shake-to-enlarge`
+
+Shaking the cursor rapidly will temporarily enlarge it, helping to locate the cursor on screen.
+
+This feature is enabled by default. To disable it, use `off`:
+
+```kdl
+cursor {
+    shake-to-enlarge {
+        off
+    }
+}
+```
+
+The following options are available inside `shake-to-enlarge`:
+
+- `off` — disable the feature.
+- `on` — explicitly enable the feature (useful to re-enable after overriding from an included configuration).
+- `zoom-factor` — how much to enlarge the cursor. Defaults to `3.0`.
+- `hold-duration-ms` — how long the cursor stays enlarged after you stop shaking, in milliseconds. Defaults to `2000`.
+- `sensitivity` — how easily the shake triggers. Higher values make it more sensitive. Defaults to `1.0`.
+
+```kdl
+cursor {
+    shake-to-enlarge {
+        //off
+        zoom-factor 5
+        hold-duration-ms 1500
+        sensitivity 1.2
+    }
+}
+```
+
+The enlarge animation can be customized in the [`animations`](./Configuration:-Animations.md) section under `cursor-enlarge`:
+
+```kdl
+animations {
+    cursor-enlarge {
+        spring damping-ratio=0.82 stiffness=400 epsilon=0.0001
+    }
+}
+```
+
+> [!NOTE]
+> The shake gesture needs the cursor to move across a certain distance. Slow, precise movements will not trigger it. Adjust `sensitivity` if you find it too hard or too easy to trigger.
 
 ### `overview`
 

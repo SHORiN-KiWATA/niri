@@ -20,6 +20,52 @@ pub struct Cursor {
     pub xcursor_size: u8,
     pub hide_when_typing: bool,
     pub hide_after_inactive_ms: Option<u32>,
+    pub shake_to_enlarge: Option<ShakeToEnlarge>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShakeToEnlarge {
+    pub off: bool,
+    pub zoom_factor: f64,
+    pub hold_duration_ms: u32,
+    pub sensitivity: f64,
+}
+
+impl Default for ShakeToEnlarge {
+    fn default() -> Self {
+        Self {
+            off: false,
+            zoom_factor: 3.0,
+            hold_duration_ms: 2000,
+            sensitivity: 1.0,
+        }
+    }
+}
+
+#[derive(knuffel::Decode, Debug, Clone, PartialEq)]
+pub struct ShakeToEnlargePart {
+    #[knuffel(child)]
+    pub off: bool,
+    #[knuffel(child)]
+    pub on: bool,
+    #[knuffel(child, unwrap(argument))]
+    pub zoom_factor: Option<FloatOrInt<0, { i32::MAX }>>,
+    #[knuffel(child, unwrap(argument))]
+    pub hold_duration_ms: Option<u32>,
+    #[knuffel(child, unwrap(argument))]
+    pub sensitivity: Option<FloatOrInt<0, { i32::MAX }>>,
+}
+
+impl MergeWith<ShakeToEnlargePart> for ShakeToEnlarge {
+    fn merge_with(&mut self, part: &ShakeToEnlargePart) {
+        self.off |= part.off;
+        if part.on {
+            self.off = false;
+        }
+
+        merge!((self, part), zoom_factor, sensitivity);
+        merge_clone!((self, part), hold_duration_ms);
+    }
 }
 
 impl Default for Cursor {
@@ -29,6 +75,7 @@ impl Default for Cursor {
             xcursor_size: 24,
             hide_when_typing: false,
             hide_after_inactive_ms: None,
+            shake_to_enlarge: None,
         }
     }
 }
@@ -43,6 +90,8 @@ pub struct CursorPart {
     pub hide_when_typing: Option<Flag>,
     #[knuffel(child, unwrap(argument))]
     pub hide_after_inactive_ms: Option<u32>,
+    #[knuffel(child)]
+    pub shake_to_enlarge: Option<ShakeToEnlargePart>,
 }
 
 impl MergeWith<CursorPart> for Cursor {
@@ -50,6 +99,13 @@ impl MergeWith<CursorPart> for Cursor {
         merge_clone!((self, part), xcursor_theme, xcursor_size);
         merge!((self, part), hide_when_typing);
         merge_clone_opt!((self, part), hide_after_inactive_ms);
+        if let Some(x) = &part.shake_to_enlarge {
+            if let Some(s) = &mut self.shake_to_enlarge {
+                s.merge_with(x);
+            } else {
+                self.shake_to_enlarge = Some(ShakeToEnlarge::from_part(x));
+            }
+        }
     }
 }
 

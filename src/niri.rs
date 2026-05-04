@@ -270,6 +270,13 @@ pub struct Niri {
     pub tablets: HashMap<input::Device, TabletData>,
     pub touch: HashSet<input::Device>,
 
+    // Shake-to-enlarge tracking
+    pub pointer_shake_energy: f64,
+    pub pointer_last_position: Option<smithay::utils::Point<f64, smithay::utils::Logical>>,
+    pub pointer_last_time: Option<std::time::Instant>,
+    pub pointer_enlarged_until: Option<std::time::Instant>,
+    pub pointer_scale_animation: Option<crate::animation::Animation>,
+
     // Smithay state.
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
@@ -2515,6 +2522,12 @@ impl Niri {
             tablets: HashMap::new(),
             touch: HashSet::new(),
 
+            pointer_shake_energy: 0.0,
+            pointer_last_position: None,
+            pointer_last_time: None,
+            pointer_enlarged_until: None,
+            pointer_scale_animation: None,
+
             compositor_state,
             xdg_shell_state,
             xdg_decoration_state,
@@ -3655,6 +3668,82 @@ impl Niri {
         state.lock_surface.as_ref().map(|s| s.wl_surface()).cloned()
     }
 
+    pub fn pointer_motion_absolute_shake(&mut self, pos: smithay::utils::Point<f64, smithay::utils::Logical>) {
+        let (hold_duration_ms, sensitivity, is_off) = if let Some(shake_conf) = self.config.borrow().cursor.shake_to_enlarge.as_ref() {
+            (shake_conf.hold_duration_ms, shake_conf.sensitivity, shake_conf.off)
+        } else {
+            return;
+        };
+
+        if is_off {
+            return;
+        }
+
+        let now = std::time::Instant::now();
+        let distance = if let Some(last_pos) = self.pointer_last_position {
+            let dx = pos.x - last_pos.x;
+            let dy = pos.y - last_pos.y;
+            (dx * dx + dy * dy).sqrt()
+        } else {
+            0.0
+        };
+
+        if let Some(last_time) = self.pointer_last_time {
+            let dt = now.duration_since(last_time).as_secs_f64();
+            // Decay energy: half-life of ~0.23 seconds
+            let decay = (-dt * 3.0).exp();
+            self.pointer_shake_energy *= decay;
+        }
+        self.pointer_shake_energy += distance;
+        self.pointer_last_time = Some(now);
+        self.pointer_last_position = Some(pos);
+
+        let effective_threshold = 1250.0 / sensitivity.max(0.001);
+        if self.pointer_shake_energy > effective_threshold {
+            self.pointer_enlarged_until = Some(now + std::time::Duration::from_millis(hold_duration_ms as u64));
+        }
+
+        self.update_pointer_scale_animation();
+    }
+
+    pub fn update_pointer_scale_animation(&mut self) {
+        let (zoom_factor, is_off) = if let Some(shake_conf) = self.config.borrow().cursor.shake_to_enlarge.as_ref() {
+            (shake_conf.zoom_factor, shake_conf.off)
+        } else {
+            return;
+        };
+
+        if is_off {
+            return;
+        }
+
+        let now = std::time::Instant::now();
+        let target_scale = if self.pointer_enlarged_until.map(|t| now < t).unwrap_or(false) {
+            zoom_factor
+        } else {
+            1.0
+        };
+
+        let current_scale = self.pointer_scale_animation.as_ref().map(|a| a.value()).unwrap_or(1.0);
+        if self.pointer_scale_animation.is_none() || (self.pointer_scale_animation.as_ref().unwrap().to() - target_scale).abs() > 0.01 {
+            if target_scale != 1.0 || current_scale != 1.0 {
+                let anim_config = niri_config::Animation {
+                    off: false,
+                    kind: self.config.borrow().animations.cursor_enlarge.0.kind,
+                };
+                let anim = crate::animation::Animation::new(
+                    self.clock.clone(),
+                    current_scale,
+                    target_scale,
+                    0.0,
+                    anim_config,
+                );
+                self.pointer_scale_animation = Some(anim);
+                self.queue_redraw_all();
+            }
+        }
+    }
+
     /// Schedules an immediate redraw on all outputs if one is not already scheduled.
     pub fn queue_redraw_all(&mut self) {
         for state in self.output_state.values_mut() {
@@ -3704,6 +3793,31 @@ impl Niri {
         let render_cursor = self.cursor_manager.get_render_cursor(cursor_scale);
 
         let output_scale = Scale::from(output.current_scale().fractional_scale());
+
+        let mut push = |elem: PointerRenderElements<R>| {
+            if let Some(anim) = &self.pointer_scale_animation {
+                let zoom = anim.value();
+                if (zoom - 1.0).abs() > 0.001 {
+                    let pivot = pointer_pos.to_physical_precise_round(output_scale);
+                    match elem {
+                        PointerRenderElements::Wayland(e) => {
+                            push(PointerRenderElements::RescaledWayland(
+                                RescaleRenderElement::from_element(e, pivot, zoom)
+                            ));
+                            return;
+                        }
+                        PointerRenderElements::NamedPointer(e) => {
+                            push(PointerRenderElements::RescaledNamedPointer(
+                                RescaleRenderElement::from_element(e, pivot, zoom)
+                            ));
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            push(elem);
+        };
 
         match render_cursor {
             RenderCursor::Hidden => (),
@@ -4594,6 +4708,11 @@ impl Niri {
 
         let mut res = RenderResult::Skipped;
         if self.monitors_active {
+            // Check if shake-to-enlarge hold duration expired and update animation.
+            self.update_pointer_scale_animation();
+            let pointer_anim_ongoing = self.pointer_scale_animation.as_ref().map(|a| !a.is_done()).unwrap_or(false)
+                || self.pointer_enlarged_until.map(|t| std::time::Instant::now() < t).unwrap_or(false);
+
             let state = self.output_state.get_mut(output).unwrap();
             state.unfinished_animations_remain = self.layout.are_animations_ongoing(Some(output));
             state.unfinished_animations_remain |=
@@ -4607,6 +4726,8 @@ impl Niri {
             state.unfinished_animations_remain |= self
                 .cursor_manager
                 .is_current_cursor_animated(output.current_scale().integer_scale());
+
+            state.unfinished_animations_remain |= pointer_anim_ongoing;
 
             // Also check layer surfaces.
             if !state.unfinished_animations_remain {
@@ -6496,6 +6617,8 @@ niri_render_elements! {
     PointerRenderElements<R> => {
         Wayland = WaylandSurfaceRenderElement<R>,
         NamedPointer = MemoryRenderBufferRenderElement<R>,
+        RescaledWayland = RescaleRenderElement<WaylandSurfaceRenderElement<R>>,
+        RescaledNamedPointer = RescaleRenderElement<MemoryRenderBufferRenderElement<R>>,
     }
 }
 
