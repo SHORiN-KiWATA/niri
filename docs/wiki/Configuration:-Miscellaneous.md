@@ -76,6 +76,7 @@ magnifier {
     // off
     zoom-factor 2.0
     // track-cursor false
+    // scale-cursor false
 }
 ```
 
@@ -505,6 +506,17 @@ When enabled (default), the magnifier follows the cursor position. Set to `false
 magnifier {
     zoom-factor 2.0
     track-cursor false
+}
+```
+
+#### `scale-cursor`
+
+When enabled (default), the cursor scales along with the magnified screen. Set to `false` to keep the cursor at its native size, preventing it from becoming large and blurry when zoomed in.
+
+```kdl
+magnifier {
+    zoom-factor 2.0
+    scale-cursor false
 }
 ```
 

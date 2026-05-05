@@ -191,6 +191,7 @@ pub struct Magnifier {
     pub off: bool,
     pub zoom_factor: f64,
     pub track_cursor: bool,
+    pub scale_cursor: bool,
 }
 
 impl Default for Magnifier {
@@ -199,6 +200,7 @@ impl Default for Magnifier {
             off: false,
             zoom_factor: 2.0,
             track_cursor: true,
+            scale_cursor: true,
         }
     }
 }
@@ -213,6 +215,8 @@ pub struct MagnifierPart {
     pub zoom_factor: Option<FloatOrInt<0, { i32::MAX }>>,
     #[knuffel(child)]
     pub track_cursor: Option<Flag>,
+    #[knuffel(child)]
+    pub scale_cursor: Option<Flag>,
 }
 
 impl MergeWith<MagnifierPart> for Magnifier {
@@ -221,7 +225,7 @@ impl MergeWith<MagnifierPart> for Magnifier {
         if part.on {
             self.off = false;
         }
-        merge!((self, part), zoom_factor, track_cursor);
+        merge!((self, part), zoom_factor, track_cursor, scale_cursor);
     }
 }
 

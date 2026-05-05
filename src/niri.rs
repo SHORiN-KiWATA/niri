@@ -3911,10 +3911,29 @@ impl Niri {
         let output_pos = self.global_space.output_geometry(output).unwrap().loc;
 
         // Check whether we need to draw the tablet cursor or the regular cursor.
-        let pointer_pos = self
+        let mut pointer_pos = self
             .tablet_cursor_location
             .unwrap_or_else(|| self.seat.get_pointer().unwrap().current_location());
-        let pointer_pos = pointer_pos - output_pos.to_f64();
+        pointer_pos -= output_pos.to_f64();
+
+        // When magnifier's scale-cursor is disabled, pre-transform the cursor
+        // position so it moves correctly without RescaleElement wrapping.
+        // Skip when capturing screenshots (magnifier is disabled for the capture).
+        {
+            let config = self.config.borrow();
+            if !config.magnifier.scale_cursor && !config.magnifier.off && !self.magnifier_capture.get()
+            {
+                drop(config);
+                if let Some((zoom, center)) = self.compute_magnifier_params(output) {
+                    let output_scale_f = output_scale.fractional_scale();
+                    let center_logical = center.to_f64().to_logical(output_scale_f);
+                    let cx = center_logical.x;
+                    let cy = center_logical.y;
+                    pointer_pos.x = cx + (pointer_pos.x - cx) * zoom;
+                    pointer_pos.y = cy + (pointer_pos.y - cy) * zoom;
+                }
+            }
+        }
 
         // Get the render cursor to draw.
         // When shake-to-enlarge is active, load a larger cursor image so the
@@ -4533,7 +4552,17 @@ impl Niri {
         ctx.xray = Some(&state.xray);
 
         if let Some((zoom, pivot)) = self.compute_magnifier_params(output) {
+            let scale_cursor = self.config.borrow().magnifier.scale_cursor;
             let mut magnifier_push = |elem| {
+                if !scale_cursor {
+                    match &elem {
+                        OutputRenderElements::Pointer(_) => {
+                            push(elem);
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
                 let rescaled =
                     RescaleRenderElement::from_element(Box::new(elem), pivot, zoom);
                 push(OutputRenderElements::Magnified(rescaled))
