@@ -21,7 +21,7 @@ use niri_config::{
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::input::Keycode;
 use smithay::backend::renderer::damage::OutputDamageTracker;
-use smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement;
+use smithay::backend::renderer::element::memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement};
 use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
 use smithay::backend::renderer::element::utils::{
     select_dmabuf_feedback, CropRenderElement, Relocate, RelocateRenderElement,
@@ -3864,8 +3864,36 @@ impl Niri {
         let pointer_pos = pointer_pos - output_pos.to_f64();
 
         // Get the render cursor to draw.
-        let cursor_scale = output_scale.integer_scale();
+        // When shake-to-enlarge is active, load a larger cursor image so the
+        // RescaleRenderElement downscales rather than upscales, avoiding blur.
+        let output_int_scale = output_scale.integer_scale();
+        let load_mult = self.pointer_scale_animation.as_ref()
+            .map(|a| a.value())
+            .filter(|z| (*z - 1.0).abs() > 0.001)
+            .map(|z| z.ceil() as i32)
+            .unwrap_or(1);
+        let cursor_scale = (output_int_scale * load_mult).max(1);
         let render_cursor = self.cursor_manager.get_render_cursor(cursor_scale);
+
+        // Pre-extract frame widths for adjusted zoom calculation.
+        let enlarged_frame_width =
+            if let RenderCursor::Named { cursor: ref c, .. } = &render_cursor {
+                let (_, f) = c.frame(0);
+                Some(f.width)
+            } else {
+                None
+            };
+        let normal_frame_width = if load_mult > 1 {
+            match self.cursor_manager.get_render_cursor(output_int_scale) {
+                RenderCursor::Named { cursor, .. } => {
+                    let (_, f) = cursor.frame(0);
+                    Some(f.width)
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
 
         let output_scale = Scale::from(output.current_scale().fractional_scale());
 
@@ -3882,9 +3910,18 @@ impl Niri {
                             return;
                         }
                         PointerRenderElements::NamedPointer(e) => {
-                            push(PointerRenderElements::RescaledNamedPointer(
-                                RescaleRenderElement::from_element(e, pivot, zoom)
-                            ));
+                            // Compute adjusted zoom based on actual loaded image sizes.
+                            let adjusted_zoom = match (enlarged_frame_width, normal_frame_width) {
+                                (Some(ew), Some(nw)) if nw > 0 => zoom * nw as f64 / ew as f64,
+                                _ => zoom / load_mult as f64,
+                            };
+                            if (adjusted_zoom - 1.0).abs() > 0.001 {
+                                push(PointerRenderElements::RescaledNamedPointer(
+                                    RescaleRenderElement::from_element(e, pivot, adjusted_zoom)
+                                ));
+                            } else {
+                                push(PointerRenderElements::NamedPointer(e));
+                            }
                             return;
                         }
                         _ => {}
@@ -3920,7 +3957,20 @@ impl Niri {
                 let pointer_pos =
                     (pointer_pos - hotspot.to_f64()).to_physical_precise_round(output_scale);
 
-                let texture = self.cursor_texture_cache.get(icon, scale, &cursor, idx);
+                // When shake-to-enlarge loads a larger cursor, build the texture
+                // directly with output_int_scale to preserve the full pixel data.
+                let texture = if load_mult > 1 {
+                    MemoryRenderBuffer::from_slice(
+                        &frame.pixels_rgba,
+                        Fourcc::Argb8888,
+                        (frame.width as i32, frame.height as i32),
+                        output_int_scale,
+                        Transform::Normal,
+                        None,
+                    )
+                } else {
+                    self.cursor_texture_cache.get(icon, scale, &cursor, idx)
+                };
                 match MemoryRenderBufferRenderElement::from_buffer(
                     renderer,
                     pointer_pos,

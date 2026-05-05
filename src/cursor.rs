@@ -1,8 +1,9 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::env;
-use std::fs::File;
+use std::fs;
 use std::io::Read;
+use std::path::Path;
 use std::rc::Rc;
 
 use anyhow::{anyhow, Context};
@@ -154,8 +155,9 @@ impl CursorManager {
         self.current_cursor = cursor;
     }
 
-    /// Load the cursor with the given `name` from the file system picking the closest
-    /// one to the given `size`.
+    /// Load the cursor with the given `name` from the file system, picking the closest
+    /// size to the given `size`. Falls back to rendering SVG files when an exact XCursor
+    /// size match is not available.
     fn load_xcursor(theme: &CursorTheme, name: &str, size: i32) -> anyhow::Result<XCursor> {
         let _span = tracy_client::span!("load_xcursor");
 
@@ -163,12 +165,25 @@ impl CursorManager {
             .load_icon(name)
             .ok_or_else(|| anyhow!("no default icon"))?;
 
-        let mut file = File::open(path).context("error opening cursor icon file")?;
+        let mut file = fs::File::open(&path).context("error opening cursor icon file")?;
         let mut buf = vec![];
         file.read_to_end(&mut buf)
             .context("error reading cursor icon file")?;
 
         let mut images = parse_xcursor(&buf).context("error parsing cursor icon file")?;
+
+        // If none of the XCursor images match the requested size closely,
+        // try rendering from SVG.
+        let best_size = images
+            .iter()
+            .min_by_key(|image| (size - image.size as i32).abs())
+            .map(|image| image.size as i32)
+            .unwrap_or(0);
+        if (size - best_size).abs() > 3 {
+            if let Some(svg_image) = Self::load_svg(&path, name, size) {
+                images.push(svg_image);
+            }
+        }
 
         let (width, height) = images
             .iter()
@@ -183,6 +198,41 @@ impl CursorManager {
         Ok(XCursor {
             images,
             animation_duration,
+        })
+    }
+
+    /// Try to render an SVG cursor at the given size.
+    ///
+    /// Looks for `<name>.svg` in the same directory as the XCursor file,
+    /// and falls back to `<icon_path>.svg`.
+    fn load_svg(xcursor_path: &Path, name: &str, size: i32) -> Option<Image> {
+        let dir = xcursor_path.parent()?;
+
+        // Try <cursors_dir>/<name>.svg first, then <xcursor_path>.svg
+        let svg_path = dir.join(format!("{name}.svg"));
+        let svg_path = if svg_path.exists() {
+            svg_path
+        } else {
+            let alt = xcursor_path.with_extension("svg");
+            if alt.exists() {
+                alt
+            } else {
+                return None;
+            }
+        };
+
+        let svg_data = fs::read_to_string(&svg_path).ok()?;
+        let (width, height, pixels_rgba, xhot, yhot) =
+            crate::render_helpers::svg::render_cursor(&svg_data, size as u32)?;
+        Some(Image {
+            size: size as u32,
+            width,
+            height,
+            xhot,
+            yhot,
+            delay: 0,
+            pixels_rgba,
+            pixels_argb: vec![],
         })
     }
 

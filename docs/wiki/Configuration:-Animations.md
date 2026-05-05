@@ -46,6 +46,10 @@ animations {
         spring damping-ratio=0.6 stiffness=1000 epsilon=0.001
     }
 
+    cursor-enlarge {
+        spring damping-ratio=0.82 stiffness=400 epsilon=0.0001
+    }
+
     exit-confirmation-open-close {
         spring damping-ratio=0.6 stiffness=500 epsilon=0.01
     }
@@ -381,6 +385,20 @@ This one uses an underdamped spring by default (`damping-ratio=0.6`) which cause
 animations {
     config-notification-open-close {
         spring damping-ratio=0.6 stiffness=1000 epsilon=0.001
+    }
+}
+```
+
+#### `cursor-enlarge`
+
+<sup>Since: 26.04</sup>
+
+The grow/shrink animation when the [shake-to-enlarge](./Configuration:-Miscellaneous.md#cursor) cursor feature triggers.
+
+```kdl
+animations {
+    cursor-enlarge {
+        spring damping-ratio=0.82 stiffness=400 epsilon=0.0001
     }
 }
 ```
