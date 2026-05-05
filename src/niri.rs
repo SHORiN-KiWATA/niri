@@ -3730,13 +3730,9 @@ impl Niri {
                 .unwrap_or(false);
 
             if grow && already_enlarged {
-                // Only accumulate grow when the spring animation has caught up.
-                let current_anim = self.pointer_scale_animation.as_ref()
-                    .map(|a| a.value())
-                    .unwrap_or(1.0);
-                if (current_anim - self.pointer_grow_zoom).abs() < 0.5 {
-                    self.pointer_grow_zoom = (self.pointer_grow_zoom + grow_speed).min(30.0);
-                }
+                // Grow the cursor further while continuing to shake.
+                // Cap at 30x to stay within the PipeWire cursor bitmap (1024×1024).
+                self.pointer_grow_zoom = (self.pointer_grow_zoom + grow_speed).min(30.0);
             } else {
                 // Reset to base zoom factor on initial trigger.
                 self.pointer_grow_zoom = zoom_factor;
