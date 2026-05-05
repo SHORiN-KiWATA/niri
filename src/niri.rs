@@ -157,7 +157,7 @@ use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
 use crate::render_helpers::surface::push_elements_from_surface_tree;
-use crate::render_helpers::texture::TextureBuffer;
+use crate::render_helpers::texture::{TextureBuffer, TextureRenderElement};
 use crate::render_helpers::xray::{Xray, XrayPos};
 use crate::render_helpers::{
     encompassing_geo, render_to_dmabuf, render_to_encompassing_texture, render_to_shm,
@@ -4503,8 +4503,57 @@ impl Niri {
 
         // If the screenshot UI is open, draw it.
         if self.screenshot_ui.is_open() {
-            self.screenshot_ui
-                .render_output(output, ctx.target, &mut |elem| push(elem.into()));
+            if self.compute_magnifier_params(output).is_some() {
+                // When the magnifier is active, render all screenshot UI elements
+                // to a single texture first. This avoids per-element rounding gaps
+                // that RescaleRenderElement::geometry() creates with to_i32_round().
+                let size = output.current_mode().unwrap().size;
+                let transform = output.current_transform();
+                let size = transform.transform_size(size);
+                let scale = Scale::from(output.current_scale().fractional_scale());
+
+                let mut ui_elements: Vec<ScreenshotUiRenderElement> = Vec::new();
+                self.screenshot_ui.render_output(
+                    output,
+                    ctx.target,
+                    &mut |elem| ui_elements.push(elem),
+                );
+
+                let renderer = ctx.renderer.as_gles_renderer();
+
+                let res = render_to_texture(
+                    renderer,
+                    size,
+                    scale,
+                    transform,
+                    Fourcc::Abgr8888,
+                    ui_elements.iter().rev(),
+                );
+
+                if let Ok((texture, _sync)) = res {
+                    let tex_buffer = TextureBuffer::from_texture(
+                        renderer,
+                        texture,
+                        scale,
+                        transform,
+                        Vec::new(),
+                    );
+                    let tex_elem = PrimaryGpuTextureRenderElement(
+                        TextureRenderElement::from_texture_buffer(
+                            tex_buffer,
+                            (0., 0.),
+                            1.,
+                            None,
+                            None,
+                            Kind::Unspecified,
+                        ),
+                    );
+                    push(OutputRenderElements::Texture(tex_elem));
+                }
+            } else {
+                self.screenshot_ui
+                    .render_output(output, ctx.target, &mut |elem| push(elem.into()));
+            }
 
             // Add the backdrop for outputs that were connected while the screenshot UI was open.
             push(backdrop);

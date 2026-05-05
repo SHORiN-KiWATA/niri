@@ -4666,6 +4666,9 @@ fn allowed_during_screenshot(action: &Action) -> bool {
             // Intended for binds such as volume up/down, lock the screen, etc.
             | Action::Spawn(_)
             | Action::SpawnSh(_)
+            // Magnifier can be toggled and adjusted during screenshot.
+            | Action::ToggleMagnifier
+            | Action::AdjustMagnifierZoom(_)
             // The screenshot UI can handle these.
             | Action::MoveColumnLeft
             | Action::MoveColumnLeftOrToMonitorLeft
