@@ -3047,11 +3047,7 @@ impl State {
                         .to_physical(output.current_scale().fractional_scale())
                         .to_i32_round();
 
-                    if self
-                        .niri
-                        .screenshot_ui
-                        .pointer_down(output, point, None)
-                    {
+                    if self.niri.screenshot_ui.pointer_down(output, point, None) {
                         self.niri.queue_redraw_all();
                     }
                 }
@@ -3431,25 +3427,24 @@ impl State {
                         !self.niri.screenshot_ui.is_open()
                             || allowed_during_screenshot(&bind.action)
                     });
-                    let bind_right =
+                    let bind_right = find_configured_bind(
+                        bindings.clone(),
+                        mod_key,
+                        Trigger::TouchpadScrollRight,
+                        mods,
+                    )
+                    .or_else(|| {
                         find_configured_bind(
                             bindings.clone(),
                             mod_key,
-                            Trigger::TouchpadScrollRight,
+                            Trigger::WheelScrollRight,
                             mods,
                         )
-                        .or_else(|| {
-                            find_configured_bind(
-                                bindings.clone(),
-                                mod_key,
-                                Trigger::WheelScrollRight,
-                                mods,
-                            )
-                        })
-                        .filter(|bind| {
-                            !self.niri.screenshot_ui.is_open()
-                                || allowed_during_screenshot(&bind.action)
-                        });
+                    })
+                    .filter(|bind| {
+                        !self.niri.screenshot_ui.is_open()
+                            || allowed_during_screenshot(&bind.action)
+                    });
                     drop(bindings);
                     drop(config);
 
@@ -3491,25 +3486,24 @@ impl State {
                         !self.niri.screenshot_ui.is_open()
                             || allowed_during_screenshot(&bind.action)
                     });
-                    let bind_down =
+                    let bind_down = find_configured_bind(
+                        bindings.clone(),
+                        mod_key,
+                        Trigger::TouchpadScrollDown,
+                        mods,
+                    )
+                    .or_else(|| {
                         find_configured_bind(
                             bindings.clone(),
                             mod_key,
-                            Trigger::TouchpadScrollDown,
+                            Trigger::WheelScrollDown,
                             mods,
                         )
-                        .or_else(|| {
-                            find_configured_bind(
-                                bindings.clone(),
-                                mod_key,
-                                Trigger::WheelScrollDown,
-                                mods,
-                            )
-                        })
-                        .filter(|bind| {
-                            !self.niri.screenshot_ui.is_open()
-                                || allowed_during_screenshot(&bind.action)
-                        });
+                    })
+                    .filter(|bind| {
+                        !self.niri.screenshot_ui.is_open()
+                            || allowed_during_screenshot(&bind.action)
+                    });
                     drop(bindings);
                     drop(config);
 
@@ -3698,11 +3692,7 @@ impl State {
                                 .to_physical(output.current_scale().fractional_scale())
                                 .to_i32_round();
 
-                            if self
-                                .niri
-                                .screenshot_ui
-                                .pointer_down(output, point, None)
-                            {
+                            if self.niri.screenshot_ui.pointer_down(output, point, None) {
                                 self.niri.queue_redraw_all();
                             }
                         }

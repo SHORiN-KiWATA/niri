@@ -4,10 +4,7 @@ use usvg::{Options, Tree};
 /// Renders an SVG cursor at the requested target size.
 ///
 /// Returns `(width, height, pixels_rgba, xhot, yhot)`.
-pub fn render_cursor(
-    svg_data: &str,
-    target_size: u32,
-) -> Option<(u32, u32, Vec<u8>, u32, u32)> {
+pub fn render_cursor(svg_data: &str, target_size: u32) -> Option<(u32, u32, Vec<u8>, u32, u32)> {
     let opts = Options::default();
     let tree = Tree::from_str(svg_data, &opts).ok()?;
 

@@ -21,7 +21,9 @@ use niri_config::{
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::input::Keycode;
 use smithay::backend::renderer::damage::OutputDamageTracker;
-use smithay::backend::renderer::element::memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement};
+use smithay::backend::renderer::element::memory::{
+    MemoryRenderBuffer, MemoryRenderBufferRenderElement,
+};
 use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
 use smithay::backend::renderer::element::utils::{
     select_dmabuf_feedback, CropRenderElement, Relocate, RelocateRenderElement,
@@ -1620,6 +1622,22 @@ impl State {
             xwls_changed = true;
         }
 
+        let old_magnifier_off = old_config.magnifier.off;
+        let old_magnifier_zoom = old_config.magnifier.zoom_factor;
+        let old_shake_off = old_config
+            .cursor
+            .shake_to_enlarge
+            .as_ref()
+            .is_none_or(|s| s.off);
+
+        let new_magnifier_off = config.magnifier.off;
+        let new_magnifier_zoom = config.magnifier.zoom_factor;
+        let new_shake_off = config
+            .cursor
+            .shake_to_enlarge
+            .as_ref()
+            .is_none_or(|s| s.off);
+
         *old_config = config;
 
         if let Some(outputs) = preserved_output_config {
@@ -1628,6 +1646,15 @@ impl State {
 
         // Release the borrow.
         drop(old_config);
+
+        self.niri.reconcile_magnifier_config(
+            old_magnifier_off,
+            old_magnifier_zoom,
+            new_magnifier_off,
+            new_magnifier_zoom,
+        );
+        self.niri
+            .reconcile_shake_config(old_shake_off, new_shake_off);
 
         // Now with a &mut self we can reload the xkb config.
         if let Some(mut xkb) = reload_xkb {
@@ -3684,7 +3711,10 @@ impl Niri {
         state.lock_surface.as_ref().map(|s| s.wl_surface()).cloned()
     }
 
-    pub fn pointer_motion_absolute_shake(&mut self, pos: smithay::utils::Point<f64, smithay::utils::Logical>) {
+    pub fn pointer_motion_absolute_shake(
+        &mut self,
+        pos: smithay::utils::Point<f64, smithay::utils::Logical>,
+    ) {
         let (hold_duration_ms, threshold, is_off, grow, grow_speed, zoom_factor) =
             if let Some(shake_conf) = self.config.borrow().cursor.shake_to_enlarge.as_ref() {
                 (
@@ -3725,7 +3755,8 @@ impl Niri {
         let effective_threshold = threshold.max(1.0);
         let growing = self.pointer_shake_energy > effective_threshold;
         if growing {
-            let already_enlarged = self.pointer_enlarged_until
+            let already_enlarged = self
+                .pointer_enlarged_until
                 .map(|t| now < t)
                 .unwrap_or(false);
 
@@ -3758,8 +3789,15 @@ impl Niri {
         }
 
         let now = std::time::Instant::now();
-        let enlarged = self.pointer_enlarged_until.map(|t| now < t).unwrap_or(false);
-        let current_scale = self.pointer_scale_animation.as_ref().map(|a| a.value()).unwrap_or(1.0);
+        let enlarged = self
+            .pointer_enlarged_until
+            .map(|t| now < t)
+            .unwrap_or(false);
+        let current_scale = self
+            .pointer_scale_animation
+            .as_ref()
+            .map(|a| a.value())
+            .unwrap_or(1.0);
 
         let target_scale = if enlarged {
             if growing {
@@ -3771,7 +3809,9 @@ impl Niri {
             1.0
         };
 
-        if self.pointer_scale_animation.is_none() || (self.pointer_scale_animation.as_ref().unwrap().to() - target_scale).abs() > 0.01 {
+        if self.pointer_scale_animation.is_none()
+            || (self.pointer_scale_animation.as_ref().unwrap().to() - target_scale).abs() > 0.01
+        {
             if target_scale != 1.0 || current_scale != 1.0 {
                 let anim_config = niri_config::Animation {
                     off: false,
@@ -3793,7 +3833,11 @@ impl Niri {
     pub fn toggle_magnifier(&mut self) {
         let (off, zoom_factor, anim_config) = {
             let config = self.config.borrow();
-            (config.magnifier.off, config.magnifier.zoom_factor, config.animations.magnifier.0)
+            (
+                config.magnifier.off,
+                config.magnifier.zoom_factor,
+                config.animations.magnifier.0,
+            )
         };
         if off {
             return;
@@ -3805,7 +3849,11 @@ impl Niri {
         }
 
         let from = self.magnifier_animation.as_ref().map_or(
-            if self.magnifier_active { 1. } else { self.magnifier_zoom },
+            if self.magnifier_active {
+                1.
+            } else {
+                self.magnifier_zoom
+            },
             |a| a.value(),
         );
         let to = if self.magnifier_active {
@@ -3858,6 +3906,37 @@ impl Niri {
         self.queue_redraw_all();
     }
 
+    fn reconcile_magnifier_config(
+        &mut self,
+        was_off: bool,
+        was_zoom: f64,
+        now_off: bool,
+        now_zoom: f64,
+    ) {
+        if !was_off && now_off && self.magnifier_active {
+            self.magnifier_active = false;
+            self.magnifier_animation = None;
+            *self.magnifier_center.borrow_mut() = None;
+            self.queue_redraw_all();
+        }
+
+        if self.magnifier_active && (now_zoom - was_zoom).abs() > f64::EPSILON {
+            self.magnifier_zoom = now_zoom;
+            self.magnifier_animation = None;
+            self.queue_redraw_all();
+        }
+    }
+
+    fn reconcile_shake_config(&mut self, was_off: bool, now_off: bool) {
+        if !was_off && now_off {
+            self.pointer_scale_animation = None;
+            self.pointer_enlarged_until = None;
+            self.pointer_grow_zoom = 1.0;
+            self.pointer_shake_energy = 0.0;
+            self.queue_redraw_all();
+        }
+    }
+
     /// Schedules an immediate redraw on all outputs if one is not already scheduled.
     pub fn queue_redraw_all(&mut self) {
         for state in self.output_state.values_mut() {
@@ -3907,7 +3986,9 @@ impl Niri {
         // Skip when capturing screenshots (magnifier is disabled for the capture).
         {
             let config = self.config.borrow();
-            if !config.magnifier.scale_cursor && !config.magnifier.off && !self.magnifier_capture.get()
+            if !config.magnifier.scale_cursor
+                && !config.magnifier.off
+                && !self.magnifier_capture.get()
             {
                 drop(config);
                 if let Some((zoom, center)) = self.compute_magnifier_params(output) {
@@ -3925,7 +4006,9 @@ impl Niri {
         // When shake-to-enlarge is active, load a larger cursor image so the
         // RescaleRenderElement downscales rather than upscales, avoiding blur.
         let output_int_scale = output_scale.integer_scale();
-        let load_mult = self.pointer_scale_animation.as_ref()
+        let load_mult = self
+            .pointer_scale_animation
+            .as_ref()
             .map(|a| a.value())
             .filter(|z| (*z - 1.0).abs() > 0.001)
             .map(|z| (z.ceil() as i32).max(1))
@@ -3934,13 +4017,13 @@ impl Niri {
         let render_cursor = self.cursor_manager.get_render_cursor(cursor_scale);
 
         // Pre-extract frame widths for adjusted zoom calculation.
-        let enlarged_frame_width =
-            if let RenderCursor::Named { cursor: ref c, .. } = &render_cursor {
-                let (_, f) = c.frame(0);
-                Some(f.width)
-            } else {
-                None
-            };
+        let enlarged_frame_width = if let RenderCursor::Named { cursor: ref c, .. } = &render_cursor
+        {
+            let (_, f) = c.frame(0);
+            Some(f.width)
+        } else {
+            None
+        };
         let normal_frame_width = if load_mult > 1 {
             match self.cursor_manager.get_render_cursor(output_int_scale) {
                 RenderCursor::Named { cursor, .. } => {
@@ -3963,7 +4046,7 @@ impl Niri {
                     match elem {
                         PointerRenderElements::Wayland(e) => {
                             push(PointerRenderElements::RescaledWayland(
-                                RescaleRenderElement::from_element(e, pivot, zoom)
+                                RescaleRenderElement::from_element(e, pivot, zoom),
                             ));
                             return;
                         }
@@ -3972,10 +4055,11 @@ impl Niri {
                             let adjusted_zoom = match (enlarged_frame_width, normal_frame_width) {
                                 (Some(ew), Some(nw)) if nw > 0 => zoom * nw as f64 / ew as f64,
                                 _ => zoom / load_mult as f64,
-                            }.max(0.0);
+                            }
+                            .max(0.0);
                             if (adjusted_zoom - 1.0).abs() > 0.001 && adjusted_zoom > 0.01 {
                                 push(PointerRenderElements::RescaledNamedPointer(
-                                    RescaleRenderElement::from_element(e, pivot, adjusted_zoom)
+                                    RescaleRenderElement::from_element(e, pivot, adjusted_zoom),
                                 ));
                             } else {
                                 push(PointerRenderElements::NamedPointer(e));
@@ -4457,10 +4541,7 @@ impl Niri {
         elements
     }
 
-    fn compute_magnifier_params(
-        &self,
-        output: &Output,
-    ) -> Option<(f64, Point<i32, Physical>)> {
+    pub fn compute_magnifier_params(&self, output: &Output) -> Option<(f64, Point<i32, Physical>)> {
         if self.magnifier_capture.get() {
             return None;
         }
@@ -4468,7 +4549,11 @@ impl Niri {
         if config.magnifier.off {
             return None;
         }
-        let magnifier_anim_ongoing = self.magnifier_animation.as_ref().map(|a| !a.is_done()).unwrap_or(false);
+        let magnifier_anim_ongoing = self
+            .magnifier_animation
+            .as_ref()
+            .map(|a| !a.is_done())
+            .unwrap_or(false);
         if !self.magnifier_active && !magnifier_anim_ongoing {
             return None;
         }
@@ -4556,8 +4641,7 @@ impl Niri {
                         _ => {}
                     }
                 }
-                let rescaled =
-                    RescaleRenderElement::from_element(Box::new(elem), pivot, zoom);
+                let rescaled = RescaleRenderElement::from_element(Box::new(elem), pivot, zoom);
                 push(OutputRenderElements::Magnified(rescaled))
             };
             self.render_inner(ctx, output, include_pointer, &mut magnifier_push);
@@ -4657,11 +4741,8 @@ impl Niri {
                 let scale = Scale::from(output.current_scale().fractional_scale());
 
                 let mut ui_elements: Vec<ScreenshotUiRenderElement> = Vec::new();
-                self.screenshot_ui.render_output(
-                    output,
-                    ctx.target,
-                    &mut |elem| ui_elements.push(elem),
-                );
+                self.screenshot_ui
+                    .render_output(output, ctx.target, &mut |elem| ui_elements.push(elem));
 
                 let renderer = ctx.renderer.as_gles_renderer();
 
@@ -4682,16 +4763,15 @@ impl Niri {
                         transform,
                         Vec::new(),
                     );
-                    let tex_elem = PrimaryGpuTextureRenderElement(
-                        TextureRenderElement::from_texture_buffer(
+                    let tex_elem =
+                        PrimaryGpuTextureRenderElement(TextureRenderElement::from_texture_buffer(
                             tex_buffer,
                             (0., 0.),
                             1.,
                             None,
                             None,
                             Kind::Unspecified,
-                        ),
-                    );
+                        ));
                     push(OutputRenderElements::Texture(tex_elem));
                 }
             } else {
@@ -5025,9 +5105,20 @@ impl Niri {
             // Check if shake-to-enlarge hold duration expired and update animation.
             self.update_pointer_scale_animation(false);
             self.update_magnifier_animation();
-            let pointer_anim_ongoing = self.pointer_scale_animation.as_ref().map(|a| !a.is_done()).unwrap_or(false)
-                || self.pointer_enlarged_until.map(|t| std::time::Instant::now() < t).unwrap_or(false);
-            let magnifier_anim_ongoing = self.magnifier_animation.as_ref().map(|a| !a.is_done()).unwrap_or(false);
+            let pointer_anim_ongoing = self
+                .pointer_scale_animation
+                .as_ref()
+                .map(|a| !a.is_done())
+                .unwrap_or(false)
+                || self
+                    .pointer_enlarged_until
+                    .map(|t| std::time::Instant::now() < t)
+                    .unwrap_or(false);
+            let magnifier_anim_ongoing = self
+                .magnifier_animation
+                .as_ref()
+                .map(|a| !a.is_done())
+                .unwrap_or(false);
 
             let state = self.output_state.get_mut(output).unwrap();
             state.unfinished_animations_remain = self.layout.are_animations_ongoing(Some(output));
@@ -5913,9 +6004,8 @@ impl Niri {
                     target,
                     xray: None,
                 };
-                self.magnifier_capture.set(true);
+                let was_magnifier_capture = self.magnifier_capture.replace(true);
                 let elements = self.render_to_vec(ctx, &output, false);
-                self.magnifier_capture.set(false);
                 let elements = elements.iter().rev();
 
                 let res = render_to_texture(
@@ -5939,6 +6029,8 @@ impl Niri {
                 if self.pointer_visibility != PointerVisibility::Disabled {
                     self.render_pointer(renderer, &output, &mut |elem| pointer.push(elem));
                 }
+
+                self.magnifier_capture.set(was_magnifier_capture);
 
                 let res_pointer = if pointer.is_empty() {
                     None
@@ -6023,6 +6115,8 @@ impl Niri {
     ) -> anyhow::Result<()> {
         let _span = tracy_client::span!("Niri::screenshot_window");
 
+        let was_magnifier_capture = self.magnifier_capture.replace(true);
+
         let scale = Scale::from(output.current_scale().fractional_scale());
         let alpha =
             if mapped.sizing_mode().is_fullscreen() || mapped.is_ignoring_opacity_window_rule() {
@@ -6075,6 +6169,8 @@ impl Niri {
             Fourcc::Abgr8888,
             elements,
         )?;
+
+        self.magnifier_capture.set(was_magnifier_capture);
 
         self.save_screenshot(geo.size, pixels, write_to_disk, path)
             .context("error saving screenshot")
@@ -6975,11 +7071,11 @@ niri_render_elements! {
 impl<R: NiriRenderer> smithay::backend::renderer::element::Element
     for Box<OutputRenderElements<R>>
 {
-    fn id(&self) -> &smithay::backend::renderer::element::Id { (**self).id() }
+    fn id(&self) -> &smithay::backend::renderer::element::Id {
+        (**self).id()
+    }
 
-    fn current_commit(
-        &self,
-    ) -> smithay::backend::renderer::utils::CommitCounter {
+    fn current_commit(&self) -> smithay::backend::renderer::utils::CommitCounter {
         (**self).current_commit()
     }
 
@@ -6990,11 +7086,11 @@ impl<R: NiriRenderer> smithay::backend::renderer::element::Element
         (**self).geometry(scale)
     }
 
-    fn transform(&self) -> smithay::utils::Transform { (**self).transform() }
+    fn transform(&self) -> smithay::utils::Transform {
+        (**self).transform()
+    }
 
-    fn src(
-        &self,
-    ) -> smithay::utils::Rectangle<f64, smithay::utils::Buffer> {
+    fn src(&self) -> smithay::utils::Rectangle<f64, smithay::utils::Buffer> {
         (**self).src()
     }
 
@@ -7013,11 +7109,17 @@ impl<R: NiriRenderer> smithay::backend::renderer::element::Element
         (**self).opaque_regions(scale)
     }
 
-    fn alpha(&self) -> f32 { (**self).alpha() }
+    fn alpha(&self) -> f32 {
+        (**self).alpha()
+    }
 
-    fn kind(&self) -> smithay::backend::renderer::element::Kind { (**self).kind() }
+    fn kind(&self) -> smithay::backend::renderer::element::Kind {
+        (**self).kind()
+    }
 
-    fn is_framebuffer_effect(&self) -> bool { (**self).is_framebuffer_effect() }
+    fn is_framebuffer_effect(&self) -> bool {
+        (**self).is_framebuffer_effect()
+    }
 }
 
 impl
@@ -7060,9 +7162,8 @@ impl
 }
 
 impl<'render>
-    smithay::backend::renderer::element::RenderElement<
-        crate::backend::tty::TtyRenderer<'render>,
-    > for Box<OutputRenderElements<crate::backend::tty::TtyRenderer<'render>>>
+    smithay::backend::renderer::element::RenderElement<crate::backend::tty::TtyRenderer<'render>>
+    for Box<OutputRenderElements<crate::backend::tty::TtyRenderer<'render>>>
 {
     fn capture_framebuffer(
         &self,
