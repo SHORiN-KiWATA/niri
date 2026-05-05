@@ -26,7 +26,7 @@ cursor {
     shake-to-enlarge {
         zoom-factor 2.5
         hold-duration-ms 1500
-        sensitivity 1.2
+        threshold 2000
     }
 }
 
@@ -227,7 +227,7 @@ The following options are available inside `shake-to-enlarge`:
 - `on` — explicitly enable the feature (useful to re-enable after overriding from an included configuration).
 - `zoom-factor` — how much to enlarge the cursor. Defaults to `3.0`.
 - `hold-duration-ms` — how long the cursor stays enlarged after you stop shaking, in milliseconds. Defaults to `1200`.
-- `sensitivity` — how easily the shake triggers. Higher values make it more sensitive. Defaults to `1.0`.
+- `threshold` — the shake energy threshold. Higher values make it harder to trigger. Defaults to `2000.0`.
 
 ```kdl
 cursor {
@@ -235,7 +235,7 @@ cursor {
         //off
         zoom-factor 5
         hold-duration-ms 1500
-        sensitivity 1.2
+        threshold 2000
     }
 }
 ```
@@ -251,7 +251,7 @@ animations {
 ```
 
 > [!NOTE]
-> The shake gesture needs the cursor to move across a certain distance. Slow, precise movements will not trigger it. Adjust `sensitivity` if you find it too hard or too easy to trigger.
+> The shake gesture needs the cursor to move across a certain distance. Slow, precise movements will not trigger it. Adjust `threshold` if you find it too hard or too easy to trigger (lower values make it easier).
 
 ### `overview`
 

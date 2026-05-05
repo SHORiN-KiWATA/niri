@@ -1489,7 +1489,7 @@ mod tests {
                         off: false,
                         zoom_factor: 3.0,
                         hold_duration_ms: 1200,
-                        sensitivity: 1.0,
+                        threshold: 2000.0,
                     },
                 ),
             },

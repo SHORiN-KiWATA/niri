@@ -28,7 +28,7 @@ pub struct ShakeToEnlarge {
     pub off: bool,
     pub zoom_factor: f64,
     pub hold_duration_ms: u32,
-    pub sensitivity: f64,
+    pub threshold: f64,
 }
 
 impl Default for ShakeToEnlarge {
@@ -37,7 +37,7 @@ impl Default for ShakeToEnlarge {
             off: false,
             zoom_factor: 3.0,
             hold_duration_ms: 1200,
-            sensitivity: 1.0,
+            threshold: 2000.0,
         }
     }
 }
@@ -53,7 +53,7 @@ pub struct ShakeToEnlargePart {
     #[knuffel(child, unwrap(argument))]
     pub hold_duration_ms: Option<u32>,
     #[knuffel(child, unwrap(argument))]
-    pub sensitivity: Option<FloatOrInt<0, { i32::MAX }>>,
+    pub threshold: Option<FloatOrInt<0, { i32::MAX }>>,
 }
 
 impl MergeWith<ShakeToEnlargePart> for ShakeToEnlarge {
@@ -63,7 +63,7 @@ impl MergeWith<ShakeToEnlargePart> for ShakeToEnlarge {
             self.off = false;
         }
 
-        merge!((self, part), zoom_factor, sensitivity);
+        merge!((self, part), zoom_factor, threshold);
         merge_clone!((self, part), hold_duration_ms);
     }
 }

@@ -3681,8 +3681,8 @@ impl Niri {
     }
 
     pub fn pointer_motion_absolute_shake(&mut self, pos: smithay::utils::Point<f64, smithay::utils::Logical>) {
-        let (hold_duration_ms, sensitivity, is_off) = if let Some(shake_conf) = self.config.borrow().cursor.shake_to_enlarge.as_ref() {
-            (shake_conf.hold_duration_ms, shake_conf.sensitivity, shake_conf.off)
+        let (hold_duration_ms, threshold, is_off) = if let Some(shake_conf) = self.config.borrow().cursor.shake_to_enlarge.as_ref() {
+            (shake_conf.hold_duration_ms, shake_conf.threshold, shake_conf.off)
         } else {
             return;
         };
@@ -3710,7 +3710,7 @@ impl Niri {
         self.pointer_last_time = Some(now);
         self.pointer_last_position = Some(pos);
 
-        let effective_threshold = 1250.0 / sensitivity.max(0.001);
+        let effective_threshold = threshold.max(1.0);
         if self.pointer_shake_energy > effective_threshold {
             self.pointer_enlarged_until = Some(now + std::time::Duration::from_millis(hold_duration_ms as u64));
         }
