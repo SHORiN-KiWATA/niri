@@ -62,8 +62,8 @@ const CAST_DELAY_ALLOWANCE: Duration = Duration::from_micros(100);
 
 const CURSOR_FORMAT: spa_video_format = SPA_VIDEO_FORMAT_BGRA;
 const CURSOR_BPP: u32 = 4;
-const CURSOR_WIDTH: u32 = 384;
-const CURSOR_HEIGHT: u32 = 384;
+const CURSOR_WIDTH: u32 = 1024;
+const CURSOR_HEIGHT: u32 = 1024;
 const CURSOR_BITMAP_SIZE: usize = (CURSOR_WIDTH * CURSOR_HEIGHT * CURSOR_BPP) as usize;
 const CURSOR_META_SIZE: usize =
     mem::size_of::<spa_meta_cursor>() + mem::size_of::<spa_meta_bitmap>() + CURSOR_BITMAP_SIZE;

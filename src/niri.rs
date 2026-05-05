@@ -283,7 +283,7 @@ pub struct Niri {
     pub magnifier_zoom: f64,
     pub magnifier_animation: Option<crate::animation::Animation>,
     pub magnifier_capture: Cell<bool>,
-    pub magnifier_center: Cell<Option<Point<i32, Physical>>>,
+    pub magnifier_center: RefCell<Option<(WeakOutput, Point<i32, Physical>)>>,
 
     // Smithay state.
     pub compositor_state: CompositorState,
@@ -2542,7 +2542,7 @@ impl Niri {
             magnifier_zoom: magnifier_zoom_factor,
             magnifier_animation: None,
             magnifier_capture: Cell::new(false),
-            magnifier_center: Cell::new(None),
+            magnifier_center: RefCell::new(None),
 
             compositor_state,
             xdg_shell_state,
@@ -3730,8 +3730,13 @@ impl Niri {
                 .unwrap_or(false);
 
             if grow && already_enlarged {
-                // Grow the cursor further while continuing to shake.
-                self.pointer_grow_zoom += grow_speed;
+                // Only accumulate grow when the spring animation has caught up.
+                let current_anim = self.pointer_scale_animation.as_ref()
+                    .map(|a| a.value())
+                    .unwrap_or(1.0);
+                if (current_anim - self.pointer_grow_zoom).abs() < 0.5 {
+                    self.pointer_grow_zoom = (self.pointer_grow_zoom + grow_speed).min(30.0);
+                }
             } else {
                 // Reset to base zoom factor on initial trigger.
                 self.pointer_grow_zoom = zoom_factor;
@@ -3745,14 +3750,9 @@ impl Niri {
     }
 
     pub fn update_pointer_scale_animation(&mut self, growing: bool) {
-        let (zoom_factor, is_off, hold_duration_ms, shrink_to_zoom_factor) =
+        let (zoom_factor, is_off) =
             if let Some(shake_conf) = self.config.borrow().cursor.shake_to_enlarge.as_ref() {
-                (
-                    shake_conf.zoom_factor,
-                    shake_conf.off,
-                    shake_conf.hold_duration_ms,
-                    shake_conf.shrink_to_zoom_factor,
-                )
+                (shake_conf.zoom_factor, shake_conf.off)
             } else {
                 return;
             };
@@ -3768,16 +3768,6 @@ impl Niri {
         let target_scale = if enlarged {
             if growing {
                 self.pointer_grow_zoom.max(zoom_factor)
-            } else if shrink_to_zoom_factor {
-                let deadline = self.pointer_enlarged_until.unwrap();
-                let half_dur = std::time::Duration::from_millis(hold_duration_ms as u64 / 2);
-                if deadline.checked_sub(half_dur).map(|t| now < t).unwrap_or(false) {
-                    // First half: freeze at current scale.
-                    current_scale
-                } else {
-                    // Second half: shrink to zoom_factor.
-                    zoom_factor
-                }
             } else {
                 current_scale
             }
@@ -3815,7 +3805,7 @@ impl Niri {
         self.magnifier_active = !self.magnifier_active;
 
         if self.magnifier_active {
-            self.magnifier_center.set(None);
+            *self.magnifier_center.borrow_mut() = None;
         }
 
         let from = self.magnifier_animation.as_ref().map_or(
@@ -3859,7 +3849,7 @@ impl Niri {
         if !self.magnifier_active {
             self.magnifier_active = true;
             self.magnifier_zoom = 1.0;
-            self.magnifier_center.set(None);
+            *self.magnifier_center.borrow_mut() = None;
         }
 
         self.magnifier_zoom = (self.magnifier_zoom + delta).clamp(1.0, 10.0);
@@ -3942,7 +3932,7 @@ impl Niri {
         let load_mult = self.pointer_scale_animation.as_ref()
             .map(|a| a.value())
             .filter(|z| (*z - 1.0).abs() > 0.001)
-            .map(|z| z.ceil() as i32)
+            .map(|z| (z.ceil() as i32).max(1))
             .unwrap_or(1);
         let cursor_scale = (output_int_scale * load_mult).max(1);
         let render_cursor = self.cursor_manager.get_render_cursor(cursor_scale);
@@ -3986,8 +3976,8 @@ impl Niri {
                             let adjusted_zoom = match (enlarged_frame_width, normal_frame_width) {
                                 (Some(ew), Some(nw)) if nw > 0 => zoom * nw as f64 / ew as f64,
                                 _ => zoom / load_mult as f64,
-                            };
-                            if (adjusted_zoom - 1.0).abs() > 0.001 {
+                            }.max(0.0);
+                            if (adjusted_zoom - 1.0).abs() > 0.001 && adjusted_zoom > 0.01 {
                                 push(PointerRenderElements::RescaledNamedPointer(
                                     RescaleRenderElement::from_element(e, pivot, adjusted_zoom)
                                 ));
@@ -4025,7 +4015,7 @@ impl Niri {
                 cursor,
             } => {
                 let (idx, frame) = cursor.frame(self.start_time.elapsed().as_millis() as u32);
-                let hotspot = XCursor::hotspot(frame).to_logical(scale);
+                let hotspot = XCursor::hotspot(frame).to_logical(output_int_scale);
                 let pointer_pos =
                     (pointer_pos - hotspot.to_f64()).to_physical_precise_round(output_scale);
 
@@ -4508,21 +4498,28 @@ impl Niri {
             let pivot = pointer_on_output.to_physical_precise_round(output_scale);
             Some((zoom, pivot))
         } else {
-            // Fixed center: capture on first activation, then lock.
+            // Fixed center: capture on first activation, then lock per-output.
+            let center = {
+                let borrowed = self.magnifier_center.borrow();
+                borrowed.as_ref().and_then(|(weak, c)| {
+                    if weak.upgrade().as_ref() == Some(output) {
+                        Some(*c)
+                    } else {
+                        None
+                    }
+                })
+            };
+            if let Some(c) = center {
+                return Some((zoom, c));
+            }
             if !output_geo.to_f64().contains(pointer_pos) {
                 return None;
             }
-            let center = match self.magnifier_center.get() {
-                Some(c) => c,
-                None => {
-                    let pointer_on_output = pointer_pos - output_geo.loc.to_f64();
-                    let output_scale = Scale::from(output.current_scale().fractional_scale());
-                    let c = pointer_on_output.to_physical_precise_round(output_scale);
-                    self.magnifier_center.set(Some(c));
-                    c
-                }
-            };
-            Some((zoom, center))
+            let pointer_on_output = pointer_pos - output_geo.loc.to_f64();
+            let output_scale = Scale::from(output.current_scale().fractional_scale());
+            let c = pointer_on_output.to_physical_precise_round(output_scale);
+            *self.magnifier_center.borrow_mut() = Some((output.downgrade(), c));
+            Some((zoom, c))
         }
     }
 
@@ -5797,12 +5794,10 @@ impl Niri {
         };
         let offset = screencopy.region_loc().upscale(-1);
         let mut elements = Vec::new();
-        self.magnifier_capture.set(true);
         self.render(ctx, output, screencopy.overlay_cursor(), &mut |elem| {
             let elem = RelocateRenderElement::from_element(elem, offset, Relocate::Relative);
             elements.push(elem);
         });
-        self.magnifier_capture.set(false);
 
         let Some(damage_tracker) = self.screencopy_state.damage_tracker(manager) else {
             error!("screencopy queue must not be deleted as long as frames exist");

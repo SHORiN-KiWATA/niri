@@ -27,6 +27,8 @@ pub fn render_cursor(
     let pixels_rgba = pixmap.data().to_vec();
 
     let (xhot, yhot) = parse_hotspot(svg_data);
+    let xhot = (xhot as f32 * scale).round() as u32;
+    let yhot = (yhot as f32 * scale).round() as u32;
 
     debug!(
         "rendered SVG cursor: {width}x{height} (target {target_size}), hotspot ({xhot}, {yhot})"

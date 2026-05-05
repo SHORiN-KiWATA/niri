@@ -1492,7 +1492,6 @@ mod tests {
                         threshold: 2000.0,
                         grow: false,
                         grow_speed: 0.01,
-                        shrink_to_zoom_factor: false,
                     },
                 ),
             },

@@ -598,9 +598,7 @@ impl Niri {
                     target: RenderTarget::Screencast,
                     xray: None,
                 };
-                self.magnifier_capture.set(true);
                 self.render(ctx, output, false, &mut |elem| elements.push(elem.into()));
-                self.magnifier_capture.set(false);
 
                 cursor_data = Some(CursorData::compute(
                     &elements,
