@@ -4490,12 +4490,12 @@ impl Niri {
             Some((zoom, pivot))
         } else {
             // Fixed center: capture on first activation, then lock.
+            if !output_geo.to_f64().contains(pointer_pos) {
+                return None;
+            }
             let center = match self.magnifier_center.get() {
                 Some(c) => c,
                 None => {
-                    if !output_geo.to_f64().contains(pointer_pos) {
-                        return None;
-                    }
                     let pointer_on_output = pointer_pos - output_geo.loc.to_f64();
                     let output_scale = Scale::from(output.current_scale().fractional_scale());
                     let c = pointer_on_output.to_physical_precise_round(output_scale);
@@ -5768,10 +5768,12 @@ impl Niri {
         };
         let offset = screencopy.region_loc().upscale(-1);
         let mut elements = Vec::new();
+        self.magnifier_capture.set(true);
         self.render(ctx, output, screencopy.overlay_cursor(), &mut |elem| {
             let elem = RelocateRenderElement::from_element(elem, offset, Relocate::Relative);
             elements.push(elem);
         });
+        self.magnifier_capture.set(false);
 
         let Some(damage_tracker) = self.screencopy_state.damage_tracker(manager) else {
             error!("screencopy queue must not be deleted as long as frames exist");
