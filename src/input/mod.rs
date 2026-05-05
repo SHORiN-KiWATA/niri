@@ -3039,12 +3039,7 @@ impl State {
             if button_state == ButtonState::Pressed {
                 let pos = pointer.current_location();
 
-                // If we'll be moving the existing selection, use the selection output.
-                let output = if mod_down {
-                    self.niri.screenshot_ui.selection_output()
-                } else {
-                    self.niri.output_under(pos).map(|(out, _)| out)
-                };
+                let output = self.niri.output_under(pos).map(|(out, _)| out);
 
                 if let Some(output) = output.cloned() {
                     let geom = self.niri.global_space.output_geometry(&output).unwrap();
@@ -3055,7 +3050,7 @@ impl State {
                     if self
                         .niri
                         .screenshot_ui
-                        .pointer_down(output, point, None, mod_down)
+                        .pointer_down(output, point, None)
                     {
                         self.niri.queue_redraw_all();
                     }
@@ -3695,17 +3690,7 @@ impl State {
                     let under = self.niri.contents_under(pos);
 
                     if self.niri.screenshot_ui.is_open() {
-                        let mod_key = self.backend.mod_key(&self.niri.config.borrow());
-                        let mods = self.niri.seat.get_keyboard().unwrap().modifier_state();
-                        let modifiers = modifiers_from_state(mods);
-                        let mod_down = modifiers.contains(mod_key.to_modifiers());
-
-                        // If we'll be moving the existing selection, use the selection output.
-                        let output = if mod_down {
-                            self.niri.screenshot_ui.selection_output()
-                        } else {
-                            under.output.as_ref()
-                        };
+                        let output = under.output.as_ref();
 
                         if let Some(output) = output.cloned() {
                             let geom = self.niri.global_space.output_geometry(&output).unwrap();
@@ -3716,7 +3701,7 @@ impl State {
                             if self
                                 .niri
                                 .screenshot_ui
-                                .pointer_down(output, point, None, mod_down)
+                                .pointer_down(output, point, None)
                             {
                                 self.niri.queue_redraw_all();
                             }
@@ -4184,12 +4169,7 @@ impl State {
         let mod_down = mods.contains(mod_key.to_modifiers());
 
         if self.niri.screenshot_ui.is_open() {
-            // If we'll be moving the existing selection, use the selection output.
-            let output = if mod_down {
-                self.niri.screenshot_ui.selection_output()
-            } else {
-                under.output.as_ref()
-            };
+            let output = under.output.as_ref();
 
             if let Some(output) = output.cloned() {
                 let geom = self.niri.global_space.output_geometry(&output).unwrap();
@@ -4200,7 +4180,7 @@ impl State {
                 if self
                     .niri
                     .screenshot_ui
-                    .pointer_down(output, point, Some(slot), mod_down)
+                    .pointer_down(output, point, Some(slot))
                 {
                     self.niri.queue_redraw_all();
                 }
