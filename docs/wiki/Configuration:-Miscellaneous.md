@@ -27,6 +27,9 @@ cursor {
         zoom-factor 2.5
         hold-duration-ms 1500
         threshold 2000
+        grow
+        grow-speed 0.01
+        shrink-to-zoom-factor
     }
 }
 
@@ -228,6 +231,9 @@ The following options are available inside `shake-to-enlarge`:
 - `zoom-factor` — how much to enlarge the cursor. Defaults to `3.0`.
 - `hold-duration-ms` — how long the cursor stays enlarged after you stop shaking, in milliseconds. Defaults to `1200`.
 - `threshold` — the shake energy threshold. Higher values make it harder to trigger. Defaults to `2000.0`.
+- `grow` — when enabled, continuing to shake while already enlarged will make the cursor grow increasingly larger with no upper limit. Defaults to `false`.
+- `grow-speed` — how much the zoom increases per shake trigger while already enlarged. Defaults to `0.01`. Only effective when `grow` is enabled.
+- `shrink-to-zoom-factor` — when enabled, `hold-duration-ms` is split: the cursor stays at its current size for the first half, then shrinks to `zoom-factor` for the second half, and finally shrinks to normal size after the full duration expires. Defaults to `false`.
 
 ```kdl
 cursor {
@@ -236,6 +242,9 @@ cursor {
         zoom-factor 5
         hold-duration-ms 1500
         threshold 2000
+        grow
+        grow-speed 0.01
+        shrink-to-zoom-factor
     }
 }
 ```

@@ -276,6 +276,7 @@ pub struct Niri {
     pub pointer_last_time: Option<std::time::Instant>,
     pub pointer_enlarged_until: Option<std::time::Instant>,
     pub pointer_scale_animation: Option<crate::animation::Animation>,
+    pub pointer_grow_zoom: f64,
 
     // Magnifier
     pub magnifier_active: bool,
@@ -2534,6 +2535,7 @@ impl Niri {
             pointer_last_time: None,
             pointer_enlarged_until: None,
             pointer_scale_animation: None,
+            pointer_grow_zoom: 1.0,
 
             magnifier_active: false,
             magnifier_zoom: magnifier_zoom_factor,
@@ -3681,11 +3683,19 @@ impl Niri {
     }
 
     pub fn pointer_motion_absolute_shake(&mut self, pos: smithay::utils::Point<f64, smithay::utils::Logical>) {
-        let (hold_duration_ms, threshold, is_off) = if let Some(shake_conf) = self.config.borrow().cursor.shake_to_enlarge.as_ref() {
-            (shake_conf.hold_duration_ms, shake_conf.threshold, shake_conf.off)
-        } else {
-            return;
-        };
+        let (hold_duration_ms, threshold, is_off, grow, grow_speed, zoom_factor) =
+            if let Some(shake_conf) = self.config.borrow().cursor.shake_to_enlarge.as_ref() {
+                (
+                    shake_conf.hold_duration_ms,
+                    shake_conf.threshold,
+                    shake_conf.off,
+                    shake_conf.grow,
+                    shake_conf.grow_speed,
+                    shake_conf.zoom_factor,
+                )
+            } else {
+                return;
+            };
 
         if is_off {
             return;
@@ -3711,32 +3721,68 @@ impl Niri {
         self.pointer_last_position = Some(pos);
 
         let effective_threshold = threshold.max(1.0);
-        if self.pointer_shake_energy > effective_threshold {
-            self.pointer_enlarged_until = Some(now + std::time::Duration::from_millis(hold_duration_ms as u64));
+        let growing = self.pointer_shake_energy > effective_threshold;
+        if growing {
+            let already_enlarged = self.pointer_enlarged_until
+                .map(|t| now < t)
+                .unwrap_or(false);
+
+            if grow && already_enlarged {
+                // Grow the cursor further while continuing to shake.
+                self.pointer_grow_zoom += grow_speed;
+            } else {
+                // Reset to base zoom factor on initial trigger.
+                self.pointer_grow_zoom = zoom_factor;
+            }
+
+            self.pointer_enlarged_until =
+                Some(now + std::time::Duration::from_millis(hold_duration_ms as u64));
         }
 
-        self.update_pointer_scale_animation();
+        self.update_pointer_scale_animation(growing);
     }
 
-    pub fn update_pointer_scale_animation(&mut self) {
-        let (zoom_factor, is_off) = if let Some(shake_conf) = self.config.borrow().cursor.shake_to_enlarge.as_ref() {
-            (shake_conf.zoom_factor, shake_conf.off)
-        } else {
-            return;
-        };
+    pub fn update_pointer_scale_animation(&mut self, growing: bool) {
+        let (zoom_factor, is_off, hold_duration_ms, shrink_to_zoom_factor) =
+            if let Some(shake_conf) = self.config.borrow().cursor.shake_to_enlarge.as_ref() {
+                (
+                    shake_conf.zoom_factor,
+                    shake_conf.off,
+                    shake_conf.hold_duration_ms,
+                    shake_conf.shrink_to_zoom_factor,
+                )
+            } else {
+                return;
+            };
 
         if is_off {
             return;
         }
 
         let now = std::time::Instant::now();
-        let target_scale = if self.pointer_enlarged_until.map(|t| now < t).unwrap_or(false) {
-            zoom_factor
+        let enlarged = self.pointer_enlarged_until.map(|t| now < t).unwrap_or(false);
+        let current_scale = self.pointer_scale_animation.as_ref().map(|a| a.value()).unwrap_or(1.0);
+
+        let target_scale = if enlarged {
+            if growing {
+                self.pointer_grow_zoom.max(zoom_factor)
+            } else if shrink_to_zoom_factor {
+                let deadline = self.pointer_enlarged_until.unwrap();
+                let half_dur = std::time::Duration::from_millis(hold_duration_ms as u64 / 2);
+                if deadline.checked_sub(half_dur).map(|t| now < t).unwrap_or(false) {
+                    // First half: freeze at current scale.
+                    current_scale
+                } else {
+                    // Second half: shrink to zoom_factor.
+                    zoom_factor
+                }
+            } else {
+                current_scale
+            }
         } else {
             1.0
         };
 
-        let current_scale = self.pointer_scale_animation.as_ref().map(|a| a.value()).unwrap_or(1.0);
         if self.pointer_scale_animation.is_none() || (self.pointer_scale_animation.as_ref().unwrap().to() - target_scale).abs() > 0.01 {
             if target_scale != 1.0 || current_scale != 1.0 {
                 let anim_config = niri_config::Animation {
@@ -4929,7 +4975,7 @@ impl Niri {
         let mut res = RenderResult::Skipped;
         if self.monitors_active {
             // Check if shake-to-enlarge hold duration expired and update animation.
-            self.update_pointer_scale_animation();
+            self.update_pointer_scale_animation(false);
             self.update_magnifier_animation();
             let pointer_anim_ongoing = self.pointer_scale_animation.as_ref().map(|a| !a.is_done()).unwrap_or(false)
                 || self.pointer_enlarged_until.map(|t| std::time::Instant::now() < t).unwrap_or(false);
