@@ -190,6 +190,7 @@ impl MergeWith<ClipboardPart> for Clipboard {
 pub struct Magnifier {
     pub off: bool,
     pub zoom_factor: f64,
+    pub track_cursor: bool,
 }
 
 impl Default for Magnifier {
@@ -197,6 +198,7 @@ impl Default for Magnifier {
         Self {
             off: false,
             zoom_factor: 2.0,
+            track_cursor: true,
         }
     }
 }
@@ -209,6 +211,8 @@ pub struct MagnifierPart {
     pub on: bool,
     #[knuffel(child, unwrap(argument))]
     pub zoom_factor: Option<FloatOrInt<0, { i32::MAX }>>,
+    #[knuffel(child)]
+    pub track_cursor: Option<Flag>,
 }
 
 impl MergeWith<MagnifierPart> for Magnifier {
@@ -217,7 +221,7 @@ impl MergeWith<MagnifierPart> for Magnifier {
         if part.on {
             self.off = false;
         }
-        merge!((self, part), zoom_factor);
+        merge!((self, part), zoom_factor, track_cursor);
     }
 }
 

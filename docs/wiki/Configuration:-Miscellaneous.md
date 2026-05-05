@@ -75,6 +75,7 @@ blur {
 magnifier {
     // off
     zoom-factor 2.0
+    // track-cursor false
 }
 ```
 
@@ -493,6 +494,17 @@ The zoom factor to use when toggling the magnifier on with a keyboard shortcut. 
 ```kdl
 magnifier {
     zoom-factor 2.5
+}
+```
+
+#### `track-cursor`
+
+When enabled (default), the magnifier follows the cursor position. Set to `false` to lock the magnification center to the cursor position at first activation, keeping the screen fixed regardless of cursor movement.
+
+```kdl
+magnifier {
+    zoom-factor 2.0
+    track-cursor false
 }
 ```
 

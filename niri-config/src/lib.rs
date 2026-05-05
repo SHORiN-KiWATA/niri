@@ -1732,6 +1732,7 @@ mod tests {
             magnifier: Magnifier {
                 off: false,
                 zoom_factor: 2.0,
+                track_cursor: true,
             },
             environment: Environment(
                 [

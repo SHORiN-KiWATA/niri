@@ -283,6 +283,7 @@ pub struct Niri {
     pub magnifier_zoom: f64,
     pub magnifier_animation: Option<crate::animation::Animation>,
     pub magnifier_capture: Cell<bool>,
+    pub magnifier_center: Cell<Option<Point<i32, Physical>>>,
 
     // Smithay state.
     pub compositor_state: CompositorState,
@@ -2541,6 +2542,7 @@ impl Niri {
             magnifier_zoom: magnifier_zoom_factor,
             magnifier_animation: None,
             magnifier_capture: Cell::new(false),
+            magnifier_center: Cell::new(None),
 
             compositor_state,
             xdg_shell_state,
@@ -3812,6 +3814,10 @@ impl Niri {
         }
         self.magnifier_active = !self.magnifier_active;
 
+        if self.magnifier_active {
+            self.magnifier_center.set(None);
+        }
+
         let from = self.magnifier_animation.as_ref().map_or(
             if self.magnifier_active { 1. } else { self.magnifier_zoom },
             |a| a.value(),
@@ -3853,6 +3859,7 @@ impl Niri {
         if !self.magnifier_active {
             self.magnifier_active = true;
             self.magnifier_zoom = 1.0;
+            self.magnifier_center.set(None);
         }
 
         self.magnifier_zoom = (self.magnifier_zoom + delta).clamp(1.0, 10.0);
@@ -4472,13 +4479,32 @@ impl Niri {
             .tablet_cursor_location
             .unwrap_or_else(|| self.seat.get_pointer().unwrap().current_location());
         let output_geo = self.global_space.output_geometry(output).unwrap();
-        if !output_geo.to_f64().contains(pointer_pos) {
-            return None;
+
+        if config.magnifier.track_cursor {
+            if !output_geo.to_f64().contains(pointer_pos) {
+                return None;
+            }
+            let pointer_on_output = pointer_pos - output_geo.loc.to_f64();
+            let output_scale = Scale::from(output.current_scale().fractional_scale());
+            let pivot = pointer_on_output.to_physical_precise_round(output_scale);
+            Some((zoom, pivot))
+        } else {
+            // Fixed center: capture on first activation, then lock.
+            let center = match self.magnifier_center.get() {
+                Some(c) => c,
+                None => {
+                    if !output_geo.to_f64().contains(pointer_pos) {
+                        return None;
+                    }
+                    let pointer_on_output = pointer_pos - output_geo.loc.to_f64();
+                    let output_scale = Scale::from(output.current_scale().fractional_scale());
+                    let c = pointer_on_output.to_physical_precise_round(output_scale);
+                    self.magnifier_center.set(Some(c));
+                    c
+                }
+            };
+            Some((zoom, center))
         }
-        let pointer_on_output = pointer_pos - output_geo.loc.to_f64();
-        let output_scale = Scale::from(output.current_scale().fractional_scale());
-        let pivot = pointer_on_output.to_physical_precise_round(output_scale);
-        Some((zoom, pivot))
     }
 
     pub fn render<R: NiriRenderer>(
