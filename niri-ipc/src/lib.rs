@@ -910,6 +910,12 @@ pub enum Action {
     },
     /// Toggle (open/close) the Overview.
     ToggleOverview {},
+    /// Toggle (open/close) the Grid Overview.
+    ToggleGridOverview {},
+    /// Open the Grid Overview.
+    OpenGridOverview {},
+    /// Close the Grid Overview.
+    CloseGridOverview {},
     /// Toggle the screen magnifier.
     ToggleMagnifier {},
     /// Adjust screen magnifier zoom factor.

@@ -259,6 +259,59 @@ impl MergeWith<OverviewPart> for Overview {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GridOverview {
+    pub gap: f64,
+    pub padding: f64,
+    pub backdrop_color: Color,
+    pub max_columns: Option<u32>,
+    pub min_scale: f64,
+}
+
+impl Default for GridOverview {
+    fn default() -> Self {
+        Self {
+            gap: 8.,
+            padding: 16.,
+            backdrop_color: DEFAULT_BACKDROP_COLOR,
+            max_columns: None,
+            min_scale: 0.08,
+        }
+    }
+}
+
+#[derive(knuffel::Decode, Debug, Clone, Copy, PartialEq)]
+pub struct GridOverviewPart {
+    #[knuffel(child, unwrap(argument))]
+    pub gap: Option<f64>,
+    #[knuffel(child, unwrap(argument))]
+    pub padding: Option<f64>,
+    #[knuffel(child)]
+    pub backdrop_color: Option<Color>,
+    #[knuffel(child, unwrap(argument))]
+    pub max_columns: Option<u32>,
+    #[knuffel(child, unwrap(argument))]
+    pub min_scale: Option<FloatOrInt<0, 1>>,
+}
+
+impl MergeWith<GridOverviewPart> for GridOverview {
+    fn merge_with(&mut self, part: &GridOverviewPart) {
+        if let Some(gap) = part.gap {
+            self.gap = gap;
+        }
+        if let Some(padding) = part.padding {
+            self.padding = padding;
+        }
+        if let Some(max_columns) = part.max_columns {
+            self.max_columns = Some(max_columns);
+        }
+        merge_clone!((self, part), backdrop_color);
+        if let Some(min_scale) = &part.min_scale {
+            self.min_scale = min_scale.0;
+        }
+    }
+}
+
 #[derive(knuffel::Decode, Debug, Default, Clone, PartialEq, Eq)]
 pub struct Environment(#[knuffel(children)] pub Vec<EnvironmentVariable>);
 

@@ -7,6 +7,9 @@ use niri_config::{
     CenterFocusedColumn, CornerRadius, OutputName, PresetSize, Workspace as WorkspaceConfig,
 };
 use niri_ipc::{ColumnDisplay, PositionChange, SizeChange, WindowLayout};
+use smithay::backend::renderer::element::utils::{
+    Relocate, RelocateRenderElement, RescaleRenderElement,
+};
 use smithay::backend::renderer::element::Kind;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::desktop::{layer_map_for_output, Window};
@@ -18,6 +21,7 @@ use smithay::wayland::compositor::with_states;
 use smithay::wayland::shell::xdg::SurfaceCachedState;
 
 use super::floating::{FloatingSpace, FloatingSpaceRenderElement};
+use super::grid_overview::{GridDirection, GridOverview};
 use super::scrolling::{
     Column, ColumnWidth, ScrollDirection, ScrollingSpace, ScrollingSpaceRenderElement,
 };
@@ -109,6 +113,9 @@ pub struct Workspace<W: LayoutElement> {
     /// Layout config overrides for this workspace.
     layout_config: Option<niri_config::LayoutPart>,
 
+    /// Grid overview state for this workspace.
+    pub(super) grid_overview: Option<GridOverview<W>>,
+
     /// Unique ID of this workspace.
     id: WorkspaceId,
 }
@@ -146,6 +153,7 @@ niri_render_elements! {
     WorkspaceRenderElement<R> => {
         Scrolling = ScrollingSpaceRenderElement<R>,
         Floating = FloatingSpaceRenderElement<R>,
+        GridTile = RelocateRenderElement<RescaleRenderElement<ScrollingSpaceRenderElement<R>>>,
     }
 }
 
@@ -270,6 +278,7 @@ impl<W: LayoutElement> Workspace<W> {
             options,
             name: config.map(|c| c.name.0),
             layout_config,
+            grid_overview: None,
             id: WorkspaceId::next(),
         }
     }
@@ -334,6 +343,7 @@ impl<W: LayoutElement> Workspace<W> {
             options,
             name: config.map(|c| c.name.0),
             layout_config,
+            grid_overview: None,
             id: WorkspaceId::next(),
         }
     }
@@ -365,14 +375,183 @@ impl<W: LayoutElement> Workspace<W> {
     pub fn advance_animations(&mut self) {
         self.scrolling.advance_animations();
         self.floating.advance_animations();
+        self.advance_grid_overview_animations();
     }
 
     pub fn are_animations_ongoing(&self) -> bool {
-        self.scrolling.are_animations_ongoing() || self.floating.are_animations_ongoing()
+        self.scrolling.are_animations_ongoing()
+            || self.floating.are_animations_ongoing()
+            || self.are_grid_overview_animations_ongoing()
     }
 
     pub fn are_transitions_ongoing(&self) -> bool {
         self.scrolling.are_transitions_ongoing() || self.floating.are_transitions_ongoing()
+    }
+
+    pub fn is_grid_overview_open(&self) -> bool {
+        self.grid_overview.as_ref().map_or(false, |g| g.open)
+    }
+
+    pub fn grid_overview_progress(&self) -> Option<f64> {
+        self.grid_overview
+            .as_ref()
+            .and_then(|g| g.progress.as_ref().map(|p| p.value()))
+    }
+
+    pub fn is_grid_overview_animation(&self) -> bool {
+        self.grid_overview
+            .as_ref()
+            .map_or(false, |g| g.is_animation())
+    }
+
+    pub fn toggle_grid_overview(&mut self) {
+        let was_open = self.is_grid_overview_open();
+        if !was_open {
+            let tiles: Vec<_> = self
+                .tiles_in_column_order()
+                .into_iter()
+                .map(|t| (t.window().id().clone(), t.tile_size()))
+                .collect();
+
+            if tiles.is_empty() {
+                return;
+            }
+
+            let mut go = GridOverview::new(self.clock.clone(), self.options.clone());
+            go.saved_active_window_id = self.active_window().map(|w| w.id().clone());
+            go.saved_view_offset = self.scrolling.view_pos();
+
+            for (id, _) in &tiles {
+                let normal = self.tile_normal_render_pos_by_id(id);
+                go.entry_positions.push((id.clone(), normal));
+            }
+
+            go.compute_layout(&tiles, self.working_area);
+
+            let focus_id = self.active_window().map(|w| w.id().clone());
+            if let Some(ref fid) = focus_id {
+                if let Some((row, col)) = go.find_grid_index(fid) {
+                    go.focus = (row, col);
+                }
+            }
+
+            go.toggle();
+            self.grid_overview = Some(go);
+        } else if let Some(ref mut go) = self.grid_overview {
+            go.toggle();
+        }
+    }
+
+    pub fn close_grid_overview(&mut self) -> bool {
+        if !self.is_grid_overview_open() {
+            return false;
+        }
+        self.toggle_grid_overview();
+        true
+    }
+
+    pub fn open_grid_overview(&mut self) -> bool {
+        if self.is_grid_overview_open() {
+            return false;
+        }
+        self.toggle_grid_overview();
+        true
+    }
+
+    pub fn grid_navigate(&mut self, dir: GridDirection) {
+        if let Some(ref mut go) = self.grid_overview {
+            go.navigate(dir);
+            if let Some(id) = go.focused_id() {
+                self.scrolling.set_active_window_silent(&id);
+            }
+        }
+    }
+
+    pub fn grid_focused_window_id(&self) -> Option<W::Id> {
+        self.grid_overview.as_ref().and_then(|g| g.focused_id())
+    }
+
+    pub fn refresh_grid_entry_positions(&mut self) {
+        let positions: Vec<_> = {
+            let go = match &self.grid_overview {
+                Some(g) => g,
+                None => return,
+            };
+            go.layout.tiles.iter().map(|(id, _)| {
+                let pos = self.tile_normal_render_pos_by_id(id);
+                (id.clone(), pos)
+            }).collect()
+        };
+        if let Some(ref mut go) = self.grid_overview {
+            go.entry_positions = positions;
+        }
+    }
+
+    pub fn on_window_closed_in_grid(&mut self) {
+        let tiles: Vec<_> = self
+            .tiles_in_column_order()
+            .into_iter()
+            .map(|t| (t.window().id().clone(), t.tile_size()))
+            .collect();
+        let working_area = self.working_area;
+        if let Some(ref mut go) = self.grid_overview {
+            if !go.open {
+                return;
+            }
+            if tiles.is_empty() {
+                self.grid_overview = None;
+                return;
+            }
+            go.compute_layout(&tiles, working_area);
+        }
+    }
+
+    pub fn deactivate_special_sizing_for_grid(&mut self) {
+        self.scrolling.deactivate_fullscreen();
+        self.scrolling.deactivate_maximized();
+    }
+
+    pub fn fix_floating_state_for_active(&mut self) {
+        if let Some(id) = self.grid_focused_window_id() {
+            if self.floating.has_window(&id) {
+                self.floating_is_active = FloatingActive::Yes;
+            } else {
+                self.floating_is_active = FloatingActive::No;
+            }
+        }
+    }
+
+    pub fn advance_grid_overview_animations(&mut self) {
+        if let Some(ref mut go) = self.grid_overview {
+            go.advance_animations();
+            if go.progress.is_none() && !go.open {
+                self.grid_overview = None;
+            }
+        }
+    }
+
+    pub fn are_grid_overview_animations_ongoing(&self) -> bool {
+        self.grid_overview.as_ref().map_or(false, |g| g.are_animations_ongoing())
+    }
+
+    fn tiles_in_column_order(&self) -> Vec<&Tile<W>> {
+        let mut tiles: Vec<&Tile<W>> = self.scrolling.tiles().collect();
+        tiles.extend(self.floating.tiles());
+        tiles
+    }
+
+    fn tile_normal_render_pos_by_id(&self, id: &W::Id) -> Point<f64, Logical> {
+        for (t, pos, _) in self.scrolling.tiles_with_render_positions() {
+            if *t.window().id() == *id {
+                return pos;
+            }
+        }
+        for (t, pos) in self.floating.tiles_with_render_positions() {
+            if *t.window().id() == *id {
+                return pos;
+            }
+        }
+        Point::from((0., 0.))
     }
 
     pub fn update_render_elements(&mut self, is_active: bool) {
@@ -382,6 +561,26 @@ impl<W: LayoutElement> Workspace<W> {
         let view_rect = Rectangle::from_size(self.view_size);
         self.floating
             .update_render_elements(is_active && self.floating_is_active.get(), view_rect);
+
+        if let Some(ref go) = self.grid_overview {
+            if go.open || go.progress.is_some() {
+                for (id, info) in go.layout.tiles.iter() {
+                    let is_grid_focused = info.row == go.focus.0 && info.col == go.focus.1;
+                    for tile in self.scrolling.tiles_mut() {
+                        if *tile.window().id() == *id {
+                            tile.update_render_elements(is_grid_focused, view_rect);
+                            break;
+                        }
+                    }
+                    for tile in self.floating.tiles_mut() {
+                        if *tile.window().id() == *id {
+                            tile.update_render_elements(is_grid_focused, view_rect);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
 
         self.shadow.update_render_elements(
             self.view_size,
@@ -1192,6 +1391,12 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn set_column_width(&mut self, change: SizeChange) {
+        if self.is_grid_overview_open() {
+            if let Some(id) = self.grid_focused_window_id() {
+                self.scrolling.set_window_width(Some(&id), change);
+                return;
+            }
+        }
         if self.floating_is_active.get() {
             self.floating.set_window_width(None, change, true);
         } else {
@@ -1610,6 +1815,18 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn active_window_visual_rectangle(&self) -> Option<Rectangle<f64, Logical>> {
+        if let Some(go) = &self.grid_overview {
+            if go.is_fully_open() {
+                if let Some(info) = go.find_grid_info(
+                    &go.focused_id()?,
+                ) {
+                    return Some(Rectangle::new(
+                        info.target_pos,
+                        info.target_size,
+                    ));
+                }
+            }
+        }
         if self.floating_is_active.get() {
             self.floating.active_window_visual_rectangle()
         } else {
@@ -1673,6 +1890,79 @@ impl<W: LayoutElement> Workspace<W> {
             1.,
             Kind::Unspecified,
         )
+    }
+
+    pub fn render_grid_overview<R: NiriRenderer>(
+        &self,
+        mut ctx: RenderCtx<R>,
+        push: &mut dyn FnMut(WorkspaceRenderElement<R>),
+        base_xray_pos: XrayPos,
+    ) {
+        let scale = self.scale.fractional_scale();
+        let overview_zoom = base_xray_pos.zoom;
+
+        let (layout, p, focus, is_closing) = {
+            let go = match &self.grid_overview {
+                Some(g) => g,
+                None => return,
+            };
+            (go.layout.clone(), go.progress_value(), go.focus, !go.open)
+        };
+
+        let render_tiles: Vec<_> = self.tiles_with_render_positions().collect();
+
+        for (tile, tile_normal_pos, visible) in &render_tiles {
+            if !visible && tile.alpha_animation.is_none() {
+                continue;
+            }
+            let id = tile.window().id();
+            let info = match layout.tiles.iter().find(|(eid, _)| *eid == *id) {
+                Some((_, i)) => i,
+                None => continue,
+            };
+
+            let normal_pos = if is_closing {
+                *tile_normal_pos
+            } else {
+                self.grid_overview
+                    .as_ref()
+                    .and_then(|go| {
+                        go.entry_positions
+                            .iter()
+                            .find(|(eid, _)| *eid == *id)
+                            .map(|(_, pos)| *pos)
+                    })
+                    .unwrap_or(*tile_normal_pos)
+            };
+
+            let lerp_x = normal_pos.x + (info.target_pos.x - normal_pos.x) * p;
+            let lerp_y = normal_pos.y + (info.target_pos.y - normal_pos.y) * p;
+            let lerp_pos = Point::from((lerp_x, lerp_y));
+
+            let final_scale = if info.target_scale < 1.0 {
+                (1.0 + (info.target_scale - 1.0) * p).max(info.target_scale)
+            } else {
+                (1.0 + (info.target_scale - 1.0) * p).min(info.target_scale)
+            };
+            let is_focused = info.row == focus.0 && info.col == focus.1;
+
+            let geo = base_xray_pos.pos_in_backdrop.upscale(overview_zoom);
+            let xray_pos = XrayPos::new(
+                geo + lerp_pos.upscale(overview_zoom),
+                final_scale * overview_zoom,
+            );
+
+            tile.render(ctx.r(), Point::from((0., 0.)), xray_pos, is_focused, &mut |elem| {
+                let elem: ScrollingSpaceRenderElement<R> = elem.into();
+                let origin = Point::<i32, smithay::utils::Physical>::from((0, 0));
+                let elem =
+                    RescaleRenderElement::from_element(elem, origin, final_scale);
+                let phys_pos = lerp_pos.to_physical_precise_round(scale);
+                let elem =
+                    RelocateRenderElement::from_element(elem, phys_pos, Relocate::Relative);
+                push(elem.into());
+            });
+        }
     }
 
     pub fn render_above_top_layer(&self) -> bool {
@@ -1753,6 +2043,27 @@ impl<W: LayoutElement> Workspace<W> {
         self.scrolling.start_open_animation(id) || self.floating.start_open_animation(id)
     }
 
+    pub fn grid_window_at(&self, pos: Point<f64, Logical>) -> Option<W::Id> {
+        let go = self.grid_overview.as_ref()?;
+        if !go.open {
+            return None;
+        }
+
+        for (id, info) in &go.layout.tiles {
+            let x = info.target_pos.x;
+            let y = info.target_pos.y;
+            let w = info.target_size.w.max(10.);
+            let h = info.target_size.h.max(10.);
+
+            if x <= pos.x && pos.x <= x + w
+                && y <= pos.y && pos.y <= y + h
+            {
+                return Some(id.clone());
+            }
+        }
+        None
+    }
+
     pub fn window_under(&self, pos: Point<f64, Logical>) -> Option<(&W, HitType)> {
         // This logic is consistent with tiles_with_render_positions().
         if self.is_floating_visible() {
@@ -1827,6 +2138,14 @@ impl<W: LayoutElement> Workspace<W> {
 
     pub fn is_urgent(&self) -> bool {
         self.windows().any(|win| win.is_urgent())
+    }
+
+    pub fn activate_window_silent(&mut self, window: &W::Id) -> bool {
+        if self.floating.has_window(window) {
+            self.floating.activate_window(window);
+            return true;
+        }
+        self.scrolling.set_active_window_silent(window)
     }
 
     pub fn activate_window(&mut self, window: &W::Id) -> bool {

@@ -1562,12 +1562,26 @@ impl<W: LayoutElement> Monitor<W> {
     pub fn window_under(&self, pos_within_output: Point<f64, Logical>) -> Option<(&W, HitType)> {
         let (ws, geo) = self.workspace_under(pos_within_output)?;
 
+        if ws.is_grid_overview_open() {
+            let zoom = self.overview_zoom();
+            let pos_within_workspace = if self.overview_progress.is_some() {
+                (pos_within_output - geo.loc).downscale(zoom)
+            } else {
+                pos_within_output - geo.loc
+            };
+            if let Some(id) = ws.grid_window_at(pos_within_workspace) {
+                let win = ws.windows().find(|w| *w.id() == id)?;
+                return Some((win, HitType::Activate {
+                    is_tab_indicator: false,
+                }));
+            }
+            return None;
+        }
+
         if self.overview_progress.is_some() {
             let zoom = self.overview_zoom();
             let pos_within_workspace = (pos_within_output - geo.loc).downscale(zoom);
             let (win, hit) = ws.window_under(pos_within_workspace)?;
-            // During the overview animation, we cannot do input hits because we cannot really
-            // represent scaled windows properly.
             Some((win, hit.to_activate()))
         } else {
             let (win, hit) = ws.window_under(pos_within_output - geo.loc)?;
@@ -1735,6 +1749,30 @@ impl<W: LayoutElement> Monitor<W> {
             }
 
             let xray_pos = XrayPos::new(geo.loc, zoom);
+
+            if ws.is_grid_overview_open() || ws.is_grid_overview_animation() {
+                let grid_scale_relocate = move |elem| {
+                    let elem = RescaleRenderElement::from_element(
+                        elem,
+                        Point::from((0, 0)),
+                        zoom,
+                    );
+                    RelocateRenderElement::from_element(
+                        elem,
+                        geo.loc.to_physical_precise_round(scale),
+                        Relocate::Relative,
+                    )
+                };
+                let mut grid_push = |elem| {
+                    let elem = CropRenderElement::from_element(elem, scale, crop_bounds);
+                    if let Some(elem) = elem {
+                        let elem = MonitorInnerRenderElement::from(elem);
+                        push(grid_scale_relocate(elem));
+                    }
+                };
+                ws.render_grid_overview(ctx.r(), &mut grid_push, xray_pos);
+                continue;
+            }
 
             ws.render_floating(ctx.r(), xray_pos, focus_ring, push!());
 

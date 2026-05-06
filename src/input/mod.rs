@@ -518,6 +518,14 @@ impl State {
                 }
 
                 if pressed && raw == Some(Keysym::Escape) {
+                    // Close grid overview on Escape.
+                    if this.niri.layout.is_grid_overview_open() {
+                        this.niri.layout.close_grid_overview();
+                        this.niri.suppressed_keys.insert(key_code);
+                        this.niri.queue_redraw_all();
+                        return FilterResult::Intercept(None);
+                    }
+
                     // Cancel certain grabs on Escape.
                     let pointer = this.niri.seat.get_pointer().unwrap();
                     if pointer
@@ -526,6 +534,15 @@ impl State {
                     {
                         pointer.unset_grab(this, serial, time);
                         this.niri.suppressed_keys.insert(key_code);
+                        return FilterResult::Intercept(None);
+                    }
+                }
+
+                if pressed && raw == Some(Keysym::Return) {
+                    if this.niri.layout.is_grid_overview_open() {
+                        this.niri.layout.confirm_grid_selection();
+                        this.niri.suppressed_keys.insert(key_code);
+                        this.niri.queue_redraw_all();
                         return FilterResult::Intercept(None);
                     }
                 }
@@ -839,7 +856,9 @@ impl State {
                 let focus = self.niri.layout.focus().map(|m| m.window.clone());
                 if let Some(window) = focus {
                     self.niri.layout.toggle_fullscreen(&window);
-                    // FIXME: granular
+                    if self.niri.layout.is_grid_overview_open() {
+                        self.niri.layout.confirm_grid_selection();
+                    }
                     self.niri.queue_redraw_all();
                 }
             }
@@ -848,7 +867,9 @@ impl State {
                 let window = window.map(|(_, m)| m.window.clone());
                 if let Some(window) = window {
                     self.niri.layout.toggle_fullscreen(&window);
-                    // FIXME: granular
+                    if self.niri.layout.is_grid_overview_open() {
+                        self.niri.layout.confirm_grid_selection();
+                    }
                     self.niri.queue_redraw_all();
                 }
             }
@@ -856,7 +877,9 @@ impl State {
                 let focus = self.niri.layout.focus().map(|m| m.window.clone());
                 if let Some(window) = focus {
                     self.niri.layout.toggle_windowed_fullscreen(&window);
-                    // FIXME: granular
+                    if self.niri.layout.is_grid_overview_open() {
+                        self.niri.layout.confirm_grid_selection();
+                    }
                     self.niri.queue_redraw_all();
                 }
             }
@@ -865,7 +888,9 @@ impl State {
                 let window = window.map(|(_, m)| m.window.clone());
                 if let Some(window) = window {
                     self.niri.layout.toggle_windowed_fullscreen(&window);
-                    // FIXME: granular
+                    if self.niri.layout.is_grid_overview_open() {
+                        self.niri.layout.confirm_grid_selection();
+                    }
                     self.niri.queue_redraw_all();
                 }
             }
@@ -1599,21 +1624,36 @@ impl State {
             }
             Action::SwitchPresetColumnWidth => {
                 self.niri.layout.toggle_width(true);
+                if self.niri.layout.is_grid_overview_open() {
+                    self.niri.layout.confirm_grid_selection();
+                }
             }
             Action::SwitchPresetColumnWidthBack => {
                 self.niri.layout.toggle_width(false);
+                if self.niri.layout.is_grid_overview_open() {
+                    self.niri.layout.confirm_grid_selection();
+                }
             }
             Action::SwitchPresetWindowWidth => {
                 self.niri.layout.toggle_window_width(None, true);
+                if self.niri.layout.is_grid_overview_open() {
+                    self.niri.layout.confirm_grid_selection();
+                }
             }
             Action::SwitchPresetWindowWidthBack => {
                 self.niri.layout.toggle_window_width(None, false);
+                if self.niri.layout.is_grid_overview_open() {
+                    self.niri.layout.confirm_grid_selection();
+                }
             }
             Action::SwitchPresetWindowWidthById(id) => {
                 let window = self.niri.layout.windows().find(|(_, m)| m.id().get() == id);
                 let window = window.map(|(_, m)| m.window.clone());
                 if let Some(window) = window {
                     self.niri.layout.toggle_window_width(Some(&window), true);
+                    if self.niri.layout.is_grid_overview_open() {
+                        self.niri.layout.confirm_grid_selection();
+                    }
                 }
             }
             Action::SwitchPresetWindowWidthBackById(id) => {
@@ -1621,10 +1661,16 @@ impl State {
                 let window = window.map(|(_, m)| m.window.clone());
                 if let Some(window) = window {
                     self.niri.layout.toggle_window_width(Some(&window), false);
+                    if self.niri.layout.is_grid_overview_open() {
+                        self.niri.layout.confirm_grid_selection();
+                    }
                 }
             }
             Action::SwitchPresetWindowHeight => {
                 self.niri.layout.toggle_window_height(None, true);
+                if self.niri.layout.is_grid_overview_open() {
+                    self.niri.layout.confirm_grid_selection();
+                }
             }
             Action::SwitchPresetWindowHeightBack => {
                 self.niri.layout.toggle_window_height(None, false);
@@ -1669,12 +1715,17 @@ impl State {
             }
             Action::MaximizeColumn => {
                 self.niri.layout.toggle_full_width();
+                if self.niri.layout.is_grid_overview_open() {
+                    self.niri.layout.confirm_grid_selection();
+                }
             }
             Action::MaximizeWindowToEdges => {
                 let focus = self.niri.layout.focus().map(|m| m.window.clone());
                 if let Some(window) = focus {
                     self.niri.layout.toggle_maximized(&window);
-                    // FIXME: granular
+                    if self.niri.layout.is_grid_overview_open() {
+                        self.niri.layout.confirm_grid_selection();
+                    }
                     self.niri.queue_redraw_all();
                 }
             }
@@ -1992,21 +2043,23 @@ impl State {
             Action::SetColumnWidth(change) => {
                 if self.niri.screenshot_ui.is_open() {
                     self.niri.screenshot_ui.set_width(change);
-
-                    // FIXME: granular
                     self.niri.queue_redraw_all();
                 } else {
                     self.niri.layout.set_column_width(change);
+                    if self.niri.layout.is_grid_overview_open() {
+                        self.niri.layout.confirm_grid_selection();
+                    }
                 }
             }
             Action::SetWindowWidth(change) => {
                 if self.niri.screenshot_ui.is_open() {
                     self.niri.screenshot_ui.set_width(change);
-
-                    // FIXME: granular
                     self.niri.queue_redraw_all();
                 } else {
                     self.niri.layout.set_window_width(None, change);
+                    if self.niri.layout.is_grid_overview_open() {
+                        self.niri.layout.confirm_grid_selection();
+                    }
                 }
             }
             Action::SetWindowWidthById { id, change } => {
@@ -2014,16 +2067,20 @@ impl State {
                 let window = window.map(|(_, m)| m.window.clone());
                 if let Some(window) = window {
                     self.niri.layout.set_window_width(Some(&window), change);
+                    if self.niri.layout.is_grid_overview_open() {
+                        self.niri.layout.confirm_grid_selection();
+                    }
                 }
             }
             Action::SetWindowHeight(change) => {
                 if self.niri.screenshot_ui.is_open() {
                     self.niri.screenshot_ui.set_height(change);
-
-                    // FIXME: granular
                     self.niri.queue_redraw_all();
                 } else {
                     self.niri.layout.set_window_height(None, change);
+                    if self.niri.layout.is_grid_overview_open() {
+                        self.niri.layout.confirm_grid_selection();
+                    }
                 }
             }
             Action::SetWindowHeightById { id, change } => {
@@ -2031,20 +2088,32 @@ impl State {
                 let window = window.map(|(_, m)| m.window.clone());
                 if let Some(window) = window {
                     self.niri.layout.set_window_height(Some(&window), change);
+                    if self.niri.layout.is_grid_overview_open() {
+                        self.niri.layout.confirm_grid_selection();
+                    }
                 }
             }
             Action::ResetWindowHeight => {
                 self.niri.layout.reset_window_height(None);
+                if self.niri.layout.is_grid_overview_open() {
+                    self.niri.layout.confirm_grid_selection();
+                }
             }
             Action::ResetWindowHeightById(id) => {
                 let window = self.niri.layout.windows().find(|(_, m)| m.id().get() == id);
                 let window = window.map(|(_, m)| m.window.clone());
                 if let Some(window) = window {
                     self.niri.layout.reset_window_height(Some(&window));
+                    if self.niri.layout.is_grid_overview_open() {
+                        self.niri.layout.confirm_grid_selection();
+                    }
                 }
             }
             Action::ExpandColumnToAvailableWidth => {
                 self.niri.layout.expand_column_to_available_width();
+                if self.niri.layout.is_grid_overview_open() {
+                    self.niri.layout.confirm_grid_selection();
+                }
             }
             Action::ShowHotkeyOverlay => {
                 if self.niri.hotkey_overlay.show() {
@@ -2281,6 +2350,20 @@ impl State {
             Action::ToggleOverview => {
                 self.niri.layout.toggle_overview();
                 self.niri.queue_redraw_all();
+            }
+            Action::ToggleGridOverview => {
+                self.niri.layout.toggle_grid_overview();
+                self.niri.queue_redraw_all();
+            }
+            Action::OpenGridOverview => {
+                if self.niri.layout.open_grid_overview() {
+                    self.niri.queue_redraw_all();
+                }
+            }
+            Action::CloseGridOverview => {
+                if self.niri.layout.close_grid_overview() {
+                    self.niri.queue_redraw_all();
+                }
             }
             Action::OpenOverview => {
                 if self.niri.layout.open_overview() {
@@ -2901,6 +2984,18 @@ impl State {
             if let Some(mapped) = self.niri.window_under_cursor() {
                 let window = mapped.window.clone();
 
+                // In grid overview, left-click activates window and exits.
+                if self.niri.layout.is_grid_overview_open()
+                    && button == Some(MouseButton::Left)
+                    && !pointer.is_grabbed()
+                {
+                    self.niri.layout.activate_window_silent(&window);
+                    self.niri.layout.grid_click_activated();
+                    self.niri.suppressed_keys.clear();
+                    self.niri.queue_redraw_all();
+                    return;
+                }
+
                 // Check if we need to start an interactive move.
                 if button == Some(MouseButton::Left) && !pointer.is_grabbed() {
                     if is_overview_open || mod_down {
@@ -3008,6 +3103,12 @@ impl State {
                 }
 
                 // FIXME: granular.
+                self.niri.queue_redraw_all();
+            } else if self.niri.layout.is_grid_overview_open()
+                && button == Some(MouseButton::Left)
+                && !pointer.is_grabbed()
+            {
+                self.niri.layout.close_grid_overview();
                 self.niri.queue_redraw_all();
             } else if let Some((output, ws)) = is_overview_open
                 .then(|| self.niri.workspace_under_cursor(false))

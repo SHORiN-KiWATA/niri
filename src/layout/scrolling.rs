@@ -384,6 +384,10 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         });
     }
 
+    pub fn closing_windows(&self) -> impl Iterator<Item = &ClosingWindow> {
+        self.closing_windows.iter()
+    }
+
     pub fn are_animations_ongoing(&self) -> bool {
         self.view_offset.is_animation_ongoing()
             || self.columns.iter().any(Column::are_animations_ongoing)
@@ -455,6 +459,24 @@ impl<W: LayoutElement> ScrollingSpace<W> {
 
         let col = &self.columns[self.active_column_idx];
         col.pending_sizing_mode().is_fullscreen()
+    }
+
+    pub fn deactivate_fullscreen(&mut self) {
+        for col in &mut self.columns {
+            if col.is_pending_fullscreen {
+                col.is_pending_fullscreen = false;
+                col.update_tile_sizes(true);
+            }
+        }
+    }
+
+    pub fn deactivate_maximized(&mut self) {
+        for col in &mut self.columns {
+            if col.is_pending_maximized {
+                col.is_pending_maximized = false;
+                col.update_tile_sizes(true);
+            }
+        }
     }
 
     pub fn new_window_toplevel_bounds(&self, rules: &ResolvedWindowRules) -> Size<i32, Logical> {
@@ -1442,6 +1464,17 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         column.activate_window(window);
         self.activate_column(column_idx);
 
+        true
+    }
+
+    pub fn set_active_window_silent(&mut self, window: &W::Id) -> bool {
+        let column_idx = self.columns.iter().position(|col| col.contains(window));
+        let Some(column_idx) = column_idx else {
+            return false;
+        };
+        self.active_column_idx = column_idx;
+        let column = &mut self.columns[column_idx];
+        column.activate_window(window);
         true
     }
 
@@ -4133,6 +4166,10 @@ impl<W: LayoutElement> Column<W> {
             is_active,
             self.scale,
         );
+    }
+
+    pub fn column_width(&self) -> &ColumnWidth {
+        &self.width
     }
 
     pub fn is_pending_fullscreen(&self) -> bool {

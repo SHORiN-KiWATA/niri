@@ -18,6 +18,7 @@ pub struct Animations {
     pub exit_confirmation_open_close: ExitConfirmationOpenCloseAnim,
     pub screenshot_ui_open: ScreenshotUiOpenAnim,
     pub overview_open_close: OverviewOpenCloseAnim,
+    pub grid_overview_open_close: GridOverviewOpenCloseAnim,
     pub magnifier: MagnifierAnim,
     pub recent_windows_close: RecentWindowsCloseAnim,
     pub cursor_enlarge: CursorEnlargeAnim,
@@ -38,6 +39,7 @@ impl Default for Animations {
             exit_confirmation_open_close: Default::default(),
             screenshot_ui_open: Default::default(),
             overview_open_close: Default::default(),
+            grid_overview_open_close: Default::default(),
             magnifier: Default::default(),
             recent_windows_close: Default::default(),
             cursor_enlarge: Default::default(),
@@ -74,6 +76,8 @@ pub struct AnimationsPart {
     #[knuffel(child)]
     pub overview_open_close: Option<OverviewOpenCloseAnim>,
     #[knuffel(child)]
+    pub grid_overview_open_close: Option<GridOverviewOpenCloseAnim>,
+    #[knuffel(child)]
     pub magnifier: Option<MagnifierAnim>,
     #[knuffel(child)]
     pub recent_windows_close: Option<RecentWindowsCloseAnim>,
@@ -104,6 +108,7 @@ impl MergeWith<AnimationsPart> for Animations {
             exit_confirmation_open_close,
             screenshot_ui_open,
             overview_open_close,
+            grid_overview_open_close,
             magnifier,
             recent_windows_close,
             cursor_enlarge,
@@ -308,6 +313,22 @@ impl Default for ScreenshotUiOpenAnim {
 pub struct OverviewOpenCloseAnim(pub Animation);
 
 impl Default for OverviewOpenCloseAnim {
+    fn default() -> Self {
+        Self(Animation {
+            off: false,
+            kind: Kind::Spring(SpringParams {
+                damping_ratio: 1.,
+                stiffness: 800,
+                epsilon: 0.0001,
+            }),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GridOverviewOpenCloseAnim(pub Animation);
+
+impl Default for GridOverviewOpenCloseAnim {
     fn default() -> Self {
         Self(Animation {
             off: false,
@@ -537,6 +558,21 @@ where
 }
 
 impl<S> knuffel::Decode<S> for OverviewOpenCloseAnim
+where
+    S: knuffel::traits::ErrorSpan,
+{
+    fn decode_node(
+        node: &knuffel::ast::SpannedNode<S>,
+        ctx: &mut knuffel::decode::Context<S>,
+    ) -> Result<Self, DecodeError<S>> {
+        let default = Self::default().0;
+        Ok(Self(Animation::decode_node(node, ctx, default, |_, _| {
+            Ok(false)
+        })?))
+    }
+}
+
+impl<S> knuffel::Decode<S> for GridOverviewOpenCloseAnim
 where
     S: knuffel::traits::ErrorSpan,
 {

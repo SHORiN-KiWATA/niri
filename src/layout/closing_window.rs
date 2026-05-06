@@ -94,6 +94,10 @@ impl AnimationState {
 }
 
 impl ClosingWindow {
+    pub fn position(&self) -> Point<f64, Logical> {
+        self.pos
+    }
+
     pub fn new<E: RenderElement<GlesRenderer>>(
         renderer: &mut GlesRenderer,
         snapshot: RenderSnapshot<E, E>,
