@@ -16,7 +16,7 @@ use smithay::desktop::{layer_map_for_output, Window};
 use smithay::output::Output;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::utils::{Logical, Point, Rectangle, Serial, Size, Transform};
+use smithay::utils::{Logical, Point, Rectangle, Scale, Serial, Size, Transform};
 use smithay::wayland::compositor::with_states;
 use smithay::wayland::shell::xdg::SurfaceCachedState;
 
@@ -477,10 +477,14 @@ impl<W: LayoutElement> Workspace<W> {
                 Some(g) => g,
                 None => return,
             };
-            go.layout.tiles.iter().map(|(id, _)| {
-                let pos = self.tile_normal_render_pos_by_id(id);
-                (id.clone(), pos)
-            }).collect()
+            go.layout
+                .tiles
+                .iter()
+                .map(|(id, _)| {
+                    let pos = self.tile_normal_render_pos_by_id(id);
+                    (id.clone(), pos)
+                })
+                .collect()
         };
         if let Some(ref mut go) = self.grid_overview {
             go.entry_positions = positions;
@@ -488,22 +492,36 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn on_window_closed_in_grid(&mut self) {
+        self.recompute_grid_overview_layout();
+    }
+
+    pub fn on_window_added_in_grid(&mut self) {
+        self.recompute_grid_overview_layout();
+    }
+
+    fn recompute_grid_overview_layout(&mut self) {
         let tiles: Vec<_> = self
             .tiles_in_column_order()
             .into_iter()
             .map(|t| (t.window().id().clone(), t.tile_size()))
             .collect();
         let working_area = self.working_area;
-        if let Some(ref mut go) = self.grid_overview {
-            if !go.open {
-                return;
-            }
-            if tiles.is_empty() {
-                self.grid_overview = None;
-                return;
-            }
-            go.compute_layout(&tiles, working_area);
+
+        let mut go = match self.grid_overview.take() {
+            Some(go) => go,
+            None => return,
+        };
+
+        if !go.open {
+            self.grid_overview = Some(go);
+            return;
         }
+        if tiles.is_empty() {
+            return;
+        }
+
+        go.compute_layout(&tiles, working_area);
+        self.grid_overview = Some(go);
     }
 
     pub fn deactivate_special_sizing_for_grid(&mut self) {
@@ -522,16 +540,23 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn advance_grid_overview_animations(&mut self) {
-        if let Some(ref mut go) = self.grid_overview {
-            go.advance_animations();
-            if go.progress.is_none() && !go.open {
-                self.grid_overview = None;
-            }
+        let mut go = match self.grid_overview.take() {
+            Some(go) => go,
+            None => return,
+        };
+
+        go.advance_animations();
+        if go.progress.is_none() && !go.open {
+            return;
         }
+
+        self.grid_overview = Some(go);
     }
 
     pub fn are_grid_overview_animations_ongoing(&self) -> bool {
-        self.grid_overview.as_ref().map_or(false, |g| g.are_animations_ongoing())
+        self.grid_overview
+            .as_ref()
+            .map_or(false, |g| g.are_animations_ongoing())
     }
 
     fn tiles_in_column_order(&self) -> Vec<&Tile<W>> {
@@ -1817,13 +1842,8 @@ impl<W: LayoutElement> Workspace<W> {
     pub fn active_window_visual_rectangle(&self) -> Option<Rectangle<f64, Logical>> {
         if let Some(go) = &self.grid_overview {
             if go.is_fully_open() {
-                if let Some(info) = go.find_grid_info(
-                    &go.focused_id()?,
-                ) {
-                    return Some(Rectangle::new(
-                        info.target_pos,
-                        info.target_size,
-                    ));
+                if let Some(info) = go.find_grid_info(&go.focused_id()?) {
+                    return Some(Rectangle::new(info.target_pos, info.target_size));
                 }
             }
         }
@@ -1935,14 +1955,38 @@ impl<W: LayoutElement> Workspace<W> {
                     .unwrap_or(*tile_normal_pos)
             };
 
-            let lerp_x = normal_pos.x + (info.target_pos.x - normal_pos.x) * p;
-            let lerp_y = normal_pos.y + (info.target_pos.y - normal_pos.y) * p;
+            let anim_p = self
+                .grid_overview
+                .as_ref()
+                .and_then(|go| go.rearrange_anim.as_ref().map(|a| a.value()))
+                .unwrap_or(p);
+
+            let lerp_x = normal_pos.x + (info.target_pos.x - normal_pos.x) * anim_p;
+            let lerp_y = normal_pos.y + (info.target_pos.y - normal_pos.y) * anim_p;
             let lerp_pos = Point::from((lerp_x, lerp_y));
 
-            let final_scale = if info.target_scale < 1.0 {
-                (1.0 + (info.target_scale - 1.0) * p).max(info.target_scale)
+            let entry_scale = if self
+                .grid_overview
+                .as_ref()
+                .and_then(|go| go.rearrange_anim.as_ref())
+                .is_some()
+            {
+                self.grid_overview
+                    .as_ref()
+                    .and_then(|go| {
+                        go.entry_scales
+                            .iter()
+                            .find(|(eid, _)| *eid == *id)
+                            .map(|(_, s)| *s)
+                    })
+                    .unwrap_or(1.0)
             } else {
-                (1.0 + (info.target_scale - 1.0) * p).min(info.target_scale)
+                1.0
+            };
+            let final_scale = if info.target_scale < entry_scale {
+                (entry_scale + (info.target_scale - entry_scale) * anim_p).max(info.target_scale)
+            } else {
+                (entry_scale + (info.target_scale - entry_scale) * anim_p).min(info.target_scale)
             };
             let is_focused = info.row == focus.0 && info.col == focus.1;
 
@@ -1952,16 +1996,36 @@ impl<W: LayoutElement> Workspace<W> {
                 final_scale * overview_zoom,
             );
 
-            tile.render(ctx.r(), Point::from((0., 0.)), xray_pos, is_focused, &mut |elem| {
-                let elem: ScrollingSpaceRenderElement<R> = elem.into();
-                let origin = Point::<i32, smithay::utils::Physical>::from((0, 0));
-                let elem =
-                    RescaleRenderElement::from_element(elem, origin, final_scale);
-                let phys_pos = lerp_pos.to_physical_precise_round(scale);
-                let elem =
-                    RelocateRenderElement::from_element(elem, phys_pos, Relocate::Relative);
+            tile.render(
+                ctx.r(),
+                Point::from((0., 0.)),
+                xray_pos,
+                is_focused,
+                &mut |elem| {
+                    let elem: ScrollingSpaceRenderElement<R> = elem.into();
+                    let origin = Point::<i32, smithay::utils::Physical>::from((0, 0));
+                    let elem = RescaleRenderElement::from_element(elem, origin, final_scale);
+                    let phys_pos = lerp_pos.to_physical_precise_round(scale);
+                    let elem =
+                        RelocateRenderElement::from_element(elem, phys_pos, Relocate::Relative);
+                    push(elem.into());
+                },
+            );
+        }
+
+        // 渲染正在关闭的窗口
+        let view_rect = Rectangle::new(Point::from((0., 0.)), self.view_size);
+        for closing in self.scrolling.closing_windows() {
+            let elem = closing.render(ctx.as_gles(), view_rect, Scale::from(scale));
+            let elem: ScrollingSpaceRenderElement<R> = elem.into();
+            push(elem.into());
+        }
+        if self.is_floating_visible() {
+            for closing in self.floating.closing_windows() {
+                let elem = closing.render(ctx.as_gles(), view_rect, Scale::from(scale));
+                let elem: FloatingSpaceRenderElement<R> = elem.into();
                 push(elem.into());
-            });
+            }
         }
     }
 
@@ -2018,6 +2082,26 @@ impl<W: LayoutElement> Workspace<W> {
         window: &W::Id,
         blocker: TransactionBlocker,
     ) {
+        if let Some(info) = self
+            .grid_overview
+            .as_ref()
+            .filter(|go| go.open)
+            .and_then(|go| go.find_grid_info(window))
+        {
+            let tile_size = info.target_size;
+            let tile_pos = info.target_pos;
+            if self.floating.has_window(window) {
+                self.floating.start_close_animation_for_window_at(
+                    renderer, window, tile_size, tile_pos, blocker,
+                );
+            } else {
+                self.scrolling.start_close_animation_for_window_at(
+                    renderer, window, tile_size, tile_pos, blocker,
+                );
+            }
+            return;
+        }
+
         if self.floating.has_window(window) {
             self.floating
                 .start_close_animation_for_window(renderer, window, blocker);
@@ -2055,9 +2139,7 @@ impl<W: LayoutElement> Workspace<W> {
             let w = info.target_size.w.max(10.);
             let h = info.target_size.h.max(10.);
 
-            if x <= pos.x && pos.x <= x + w
-                && y <= pos.y && pos.y <= y + h
-            {
+            if x <= pos.x && pos.x <= x + w && y <= pos.y && pos.y <= y + h {
                 return Some(id.clone());
             }
         }

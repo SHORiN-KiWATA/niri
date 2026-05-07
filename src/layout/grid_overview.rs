@@ -21,6 +21,8 @@ pub struct GridOverview<W: LayoutElement> {
     pub saved_active_window_id: Option<W::Id>,
     pub saved_view_offset: f64,
     pub entry_positions: Vec<(W::Id, Point<f64, Logical>)>,
+    pub entry_scales: Vec<(W::Id, f64)>,
+    pub rearrange_anim: Option<Animation>,
     pub clock: Clock,
     pub options: Rc<Options>,
 }
@@ -35,6 +37,8 @@ impl<W: LayoutElement> GridOverview<W> {
             saved_active_window_id: None,
             saved_view_offset: 0.,
             entry_positions: Vec::new(),
+            entry_scales: Vec::new(),
+            rearrange_anim: None,
             clock,
             options,
         }
@@ -49,11 +53,12 @@ impl<W: LayoutElement> GridOverview<W> {
     }
 
     pub fn is_animation(&self) -> bool {
-        self.progress.as_ref().map_or(false, |p| p.is_animation())
+        self.progress.as_ref().map_or(false, |p| p.is_animation()) || self.rearrange_anim.is_some()
     }
 
     pub fn toggle(&mut self) {
         self.open = !self.open;
+        self.rearrange_anim = None;
 
         let from = self.progress.take().map_or(0., |p| p.value());
         let to = if self.open { 1. } else { 0. };
@@ -72,7 +77,53 @@ impl<W: LayoutElement> GridOverview<W> {
         tiles: &[(W::Id, Size<f64, Logical>)],
         area: Rectangle<f64, Logical>,
     ) {
+        let old_layout = self.layout.clone();
+        if self.is_fully_open() && !self.layout.tiles.is_empty() {
+            self.rearrange_anim = Some(Animation::new(
+                self.clock.clone(),
+                0.,
+                1.,
+                0.,
+                self.options.animations.window_movement.0,
+            ));
+        }
         self.layout = GridLayout::compute(tiles, area, &self.options.grid_overview);
+        let mut new_entries = Vec::new();
+        for (id, info) in &self.layout.tiles {
+            let pos = self
+                .entry_positions
+                .iter()
+                .find(|(eid, _)| eid == id)
+                .map(|(_, pos)| *pos)
+                .or_else(|| {
+                    old_layout
+                        .tiles
+                        .iter()
+                        .find(|(eid, _)| eid == id)
+                        .map(|(_, old_info)| old_info.target_pos)
+                })
+                .unwrap_or(info.target_pos);
+            new_entries.push((id.clone(), pos));
+        }
+        self.entry_positions = new_entries;
+        let mut new_scales = Vec::new();
+        for (id, info) in &self.layout.tiles {
+            let scale = self
+                .entry_scales
+                .iter()
+                .find(|(eid, _)| eid == id)
+                .map(|(_, s)| *s)
+                .or_else(|| {
+                    old_layout
+                        .tiles
+                        .iter()
+                        .find(|(eid, _)| eid == id)
+                        .map(|(_, old_info)| old_info.target_scale)
+                })
+                .unwrap_or(info.target_scale);
+            new_scales.push((id.clone(), scale));
+        }
+        self.entry_scales = new_scales;
         if self.layout.tiles.is_empty() {
             self.focus = (0, 0);
         } else {
@@ -88,16 +139,32 @@ impl<W: LayoutElement> GridOverview<W> {
         let (row, col) = self.focus;
         self.focus = match dir {
             GridDirection::Up => {
-                if row > 0 { (row - 1, col) } else { (self.layout.rows - 1, col) }
+                if row > 0 {
+                    (row - 1, col)
+                } else {
+                    (row, col)
+                }
             }
             GridDirection::Down => {
-                if row + 1 < self.layout.rows { (row + 1, col) } else { (0, col) }
+                if row + 1 < self.layout.rows {
+                    (row + 1, col)
+                } else {
+                    (row, col)
+                }
             }
             GridDirection::Left => {
-                if col > 0 { (row, col - 1) } else { (row, self.layout.cols - 1) }
+                if col > 0 {
+                    (row, col - 1)
+                } else {
+                    (row, col)
+                }
             }
             GridDirection::Right => {
-                if col + 1 < self.layout.cols { (row, col + 1) } else { (row, 0) }
+                if col + 1 < self.layout.cols {
+                    (row, col + 1)
+                } else {
+                    (row, col)
+                }
             }
         };
         let idx = self.focus.0 * self.layout.cols + self.focus.1;
@@ -113,13 +180,24 @@ impl<W: LayoutElement> GridOverview<W> {
     }
 
     pub fn find_grid_info(&self, id: &W::Id) -> Option<&GridTileInfo> {
-        self.layout.tiles.iter().find_map(|(tid, info)| if tid == id { Some(info) } else { None })
+        self.layout
+            .tiles
+            .iter()
+            .find_map(|(tid, info)| if tid == id { Some(info) } else { None })
     }
 
     pub fn find_grid_index(&self, id: &W::Id) -> Option<(usize, usize)> {
-        self.layout.tiles.iter().enumerate().find_map(|(idx, (tid, _))| {
-            if tid == id { Some((idx / self.layout.cols, idx % self.layout.cols)) } else { None }
-        })
+        self.layout
+            .tiles
+            .iter()
+            .enumerate()
+            .find_map(|(idx, (tid, _))| {
+                if tid == id {
+                    Some((idx / self.layout.cols, idx % self.layout.cols))
+                } else {
+                    None
+                }
+            })
     }
 
     pub fn advance_animations(&mut self) {
@@ -132,10 +210,24 @@ impl<W: LayoutElement> GridOverview<W> {
                 };
             }
         }
+        if let Some(anim) = &mut self.rearrange_anim {
+            if anim.is_done() {
+                self.rearrange_anim = None;
+                for (id, info) in &self.layout.tiles {
+                    if let Some(entry) = self.entry_positions.iter_mut().find(|(eid, _)| eid == id)
+                    {
+                        entry.1 = info.target_pos;
+                    }
+                    if let Some(entry) = self.entry_scales.iter_mut().find(|(eid, _)| eid == id) {
+                        entry.1 = info.target_scale;
+                    }
+                }
+            }
+        }
     }
 
     pub fn are_animations_ongoing(&self) -> bool {
-        self.progress.as_ref().map_or(false, |p| p.is_animation())
+        self.progress.as_ref().map_or(false, |p| p.is_animation()) || self.rearrange_anim.is_some()
     }
 }
 

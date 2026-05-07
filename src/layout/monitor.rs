@@ -1571,9 +1571,12 @@ impl<W: LayoutElement> Monitor<W> {
             };
             if let Some(id) = ws.grid_window_at(pos_within_workspace) {
                 let win = ws.windows().find(|w| *w.id() == id)?;
-                return Some((win, HitType::Activate {
-                    is_tab_indicator: false,
-                }));
+                return Some((
+                    win,
+                    HitType::Activate {
+                        is_tab_indicator: false,
+                    },
+                ));
             }
             return None;
         }
@@ -1752,11 +1755,7 @@ impl<W: LayoutElement> Monitor<W> {
 
             if ws.is_grid_overview_open() || ws.is_grid_overview_animation() {
                 let grid_scale_relocate = move |elem| {
-                    let elem = RescaleRenderElement::from_element(
-                        elem,
-                        Point::from((0, 0)),
-                        zoom,
-                    );
+                    let elem = RescaleRenderElement::from_element(elem, Point::from((0, 0)), zoom);
                     RelocateRenderElement::from_element(
                         elem,
                         geo.loc.to_physical_precise_round(scale),

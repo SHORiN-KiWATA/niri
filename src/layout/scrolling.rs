@@ -1539,6 +1539,25 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         self.start_close_animation_for_tile(renderer, snapshot, tile_size, tile_pos, blocker);
     }
 
+    pub fn start_close_animation_for_window_at(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        window: &W::Id,
+        tile_size: Size<f64, Logical>,
+        tile_pos: Point<f64, Logical>,
+        blocker: TransactionBlocker,
+    ) {
+        let Some(snapshot) = self
+            .tiles_with_render_positions_mut(false)
+            .find(|(tile, _)| tile.window().id() == window)
+            .and_then(|(tile, _)| tile.take_unmap_snapshot())
+        else {
+            return;
+        };
+
+        self.start_close_animation_for_tile(renderer, snapshot, tile_size, tile_pos, blocker);
+    }
+
     fn start_close_animation_for_tile(
         &mut self,
         renderer: &mut GlesRenderer,

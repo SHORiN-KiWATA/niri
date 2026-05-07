@@ -445,6 +445,10 @@ impl<W: LayoutElement> Tile<W> {
         self.are_transitions_ongoing() || self.window.rules().baba_is_float == Some(true)
     }
 
+    pub fn has_open_animation(&self) -> bool {
+        self.open_animation.is_some()
+    }
+
     pub fn are_transitions_ongoing(&self) -> bool {
         self.open_animation.is_some()
             || self.resize_animation.is_some()

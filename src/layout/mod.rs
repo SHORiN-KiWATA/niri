@@ -52,8 +52,8 @@ use smithay::utils::{Logical, Point, Rectangle, Scale, Serial, Size, Transform};
 use tile::{Tile, TileRenderElement};
 use workspace::{WorkspaceAddWindowTarget, WorkspaceId};
 
-pub use self::monitor::MonitorRenderElement;
 use self::grid_overview::GridDirection;
+pub use self::monitor::MonitorRenderElement;
 use self::monitor::{Monitor, WorkspaceSwitch};
 use self::workspace::{OutputId, Workspace};
 use crate::animation::{Animation, Clock};
@@ -1035,7 +1035,7 @@ impl<W: LayoutElement> Layout<W> {
                     }
                 }
 
-                mon.workspaces[ws_idx].on_window_closed_in_grid();
+                mon.workspaces[ws_idx].on_window_added_in_grid();
 
                 Some(&mon.output)
             }
@@ -1110,7 +1110,7 @@ impl<W: LayoutElement> Layout<W> {
                     }
                 }
 
-                workspaces[ws_idx].on_window_closed_in_grid();
+                workspaces[ws_idx].on_window_added_in_grid();
 
                 None
             }
@@ -1807,7 +1807,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_left(&mut self) {
-        if self.grid_move_guard() { return; }
+        if self.grid_move_guard() {
+            return;
+        }
         let Some(workspace) = self.active_workspace_mut() else {
             return;
         };
@@ -1815,7 +1817,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_right(&mut self) {
-        if self.grid_move_guard() { return; }
+        if self.grid_move_guard() {
+            return;
+        }
         let Some(workspace) = self.active_workspace_mut() else {
             return;
         };
@@ -1823,7 +1827,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_column_to_first(&mut self) {
-        if self.grid_move_guard() { return; }
+        if self.grid_move_guard() {
+            return;
+        }
         let Some(workspace) = self.active_workspace_mut() else {
             return;
         };
@@ -1831,7 +1837,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_column_to_last(&mut self) {
-        if self.grid_move_guard() { return; }
+        if self.grid_move_guard() {
+            return;
+        }
         let Some(workspace) = self.active_workspace_mut() else {
             return;
         };
@@ -1839,7 +1847,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_column_left_or_to_output(&mut self, output: &Output) -> bool {
-        if self.grid_move_guard() { return false; }
+        if self.grid_move_guard() {
+            return false;
+        }
         if let Some(workspace) = self.active_workspace_mut() {
             if workspace.move_left() {
                 return false;
@@ -1851,7 +1861,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_column_right_or_to_output(&mut self, output: &Output) -> bool {
-        if self.grid_move_guard() { return false; }
+        if self.grid_move_guard() {
+            return false;
+        }
         if let Some(workspace) = self.active_workspace_mut() {
             if workspace.move_right() {
                 return false;
@@ -1863,7 +1875,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_column_to_index(&mut self, index: usize) {
-        if self.grid_move_guard() { return; }
+        if self.grid_move_guard() {
+            return;
+        }
         let Some(workspace) = self.active_workspace_mut() else {
             return;
         };
@@ -1871,7 +1885,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_down(&mut self) {
-        if self.grid_move_guard() { return; }
+        if self.grid_move_guard() {
+            return;
+        }
         let Some(workspace) = self.active_workspace_mut() else {
             return;
         };
@@ -1879,7 +1895,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_up(&mut self) {
-        if self.grid_move_guard() { return; }
+        if self.grid_move_guard() {
+            return;
+        }
         let Some(workspace) = self.active_workspace_mut() else {
             return;
         };
@@ -1887,7 +1905,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_down_or_to_workspace_down(&mut self) {
-        if self.grid_move_guard() { return; }
+        if self.grid_move_guard() {
+            return;
+        }
         let Some(monitor) = self.active_monitor() else {
             return;
         };
@@ -1895,7 +1915,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_up_or_to_workspace_up(&mut self) {
-        if self.grid_move_guard() { return; }
+        if self.grid_move_guard() {
+            return;
+        }
         let Some(monitor) = self.active_monitor() else {
             return;
         };
@@ -1903,7 +1925,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn consume_or_expel_window_left(&mut self, window: Option<&W::Id>) {
-        if self.grid_move_guard() { return; }
+        if self.grid_move_guard() {
+            return;
+        }
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
             if window.is_none() || window == Some(move_.tile.window().id()) {
                 return;
@@ -1927,7 +1951,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn consume_or_expel_window_right(&mut self, window: Option<&W::Id>) {
-        if self.grid_move_guard() { return; }
+        if self.grid_move_guard() {
+            return;
+        }
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
             if window.is_none() || window == Some(move_.tile.window().id()) {
                 return;
@@ -2151,7 +2177,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_to_workspace_up(&mut self, focus: bool) {
-        if self.grid_move_guard() { return; }
+        if self.grid_move_guard() {
+            return;
+        }
         let Some(monitor) = self.active_monitor() else {
             return;
         };
@@ -2159,7 +2187,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_to_workspace_down(&mut self, focus: bool) {
-        if self.grid_move_guard() { return; }
+        if self.grid_move_guard() {
+            return;
+        }
         let Some(monitor) = self.active_monitor() else {
             return;
         };
@@ -2172,7 +2202,9 @@ impl<W: LayoutElement> Layout<W> {
         idx: usize,
         activate: ActivateWindow,
     ) {
-        if self.grid_move_guard() { return; }
+        if self.grid_move_guard() {
+            return;
+        }
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
             if window.is_none() || window == Some(move_.tile.window().id()) {
                 return;
@@ -2199,7 +2231,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_column_to_workspace_up(&mut self, activate: bool) {
-        if self.grid_move_guard() { return; }
+        if self.grid_move_guard() {
+            return;
+        }
         let Some(monitor) = self.active_monitor() else {
             return;
         };
@@ -2207,7 +2241,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_column_to_workspace_down(&mut self, activate: bool) {
-        if self.grid_move_guard() { return; }
+        if self.grid_move_guard() {
+            return;
+        }
         let Some(monitor) = self.active_monitor() else {
             return;
         };
@@ -2215,7 +2251,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_column_to_workspace(&mut self, idx: usize, activate: bool) {
-        if self.grid_move_guard() { return; }
+        if self.grid_move_guard() {
+            return;
+        }
         let Some(monitor) = self.active_monitor() else {
             return;
         };
@@ -2258,7 +2296,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn consume_into_column(&mut self) {
-        if self.grid_move_guard() { return; }
+        if self.grid_move_guard() {
+            return;
+        }
         let Some(workspace) = self.active_workspace_mut() else {
             return;
         };
@@ -2266,7 +2306,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn expel_from_column(&mut self) {
-        if self.grid_move_guard() { return; }
+        if self.grid_move_guard() {
+            return;
+        }
         let Some(workspace) = self.active_workspace_mut() else {
             return;
         };
@@ -2274,7 +2316,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn swap_window_in_direction(&mut self, direction: ScrollDirection) {
-        if self.grid_move_guard() { return; }
+        if self.grid_move_guard() {
+            return;
+        }
         let Some(workspace) = self.active_workspace_mut() else {
             return;
         };
@@ -2286,7 +2330,6 @@ impl<W: LayoutElement> Layout<W> {
             return;
         };
         workspace.toggle_column_tabbed_display();
-
     }
 
     pub fn set_column_display(&mut self, display: ColumnDisplay) {
@@ -2294,7 +2337,6 @@ impl<W: LayoutElement> Layout<W> {
             return;
         };
         workspace.set_column_display(display);
-
     }
 
     pub fn center_column(&mut self) {
@@ -3195,7 +3237,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn toggle_window_floating(&mut self, window: Option<&W::Id>) {
-        if self.grid_move_guard() { return; }
+        if self.grid_move_guard() {
+            return;
+        }
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
             if window.is_none() || window == Some(move_.tile.window().id()) {
                 move_.is_floating = !move_.is_floating;
@@ -3256,7 +3300,6 @@ impl<W: LayoutElement> Layout<W> {
             return;
         };
         workspace.toggle_window_floating(window);
-
     }
 
     pub fn set_window_floating(&mut self, window: Option<&W::Id>, floating: bool) {
@@ -3283,7 +3326,6 @@ impl<W: LayoutElement> Layout<W> {
             return;
         };
         workspace.set_window_floating(window, floating);
-
     }
 
     pub fn focus_floating(&mut self) {
@@ -5111,7 +5153,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn confirm_grid_selection(&mut self) {
-        let Some(id) = self.grid_focused_window_id() else { return; };
+        let Some(id) = self.grid_focused_window_id() else {
+            return;
+        };
         self.activate_window_silent(&id);
         if let Some(ws) = self.active_workspace_mut() {
             ws.fix_floating_state_for_active();
