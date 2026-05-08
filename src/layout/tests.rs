@@ -749,6 +749,7 @@ enum Op {
         window: usize,
     },
     ToggleOverview,
+    ToggleGridOverview,
     UpdateConfig {
         #[proptest(strategy = "arbitrary_layout_part().prop_map(Box::new)")]
         layout_config: Box<niri_config::LayoutPart>,
@@ -1616,6 +1617,9 @@ impl Op {
             }
             Op::ToggleOverview => {
                 layout.toggle_overview();
+            }
+            Op::ToggleGridOverview => {
+                layout.toggle_grid_overview();
             }
             Op::UpdateConfig { layout_config } => {
                 let options = Options {
@@ -3583,6 +3587,198 @@ fn unmaximize_during_fullscreen_does_not_float() {
     // Unfullscreen should return the window back to floating.
     let scrolling = layout.active_workspace().unwrap().scrolling();
     assert!(scrolling.tiles().next().is_none());
+}
+
+#[test]
+fn grid_overview_preserves_fullscreen() {
+    let ops = [
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::FullscreenWindow(1),
+        Op::ToggleGridOverview,
+    ];
+
+    let mut layout = check_ops(ops);
+
+    assert!(layout.is_grid_overview_open());
+    let (_, win) = layout.windows().find(|(_, win)| *win.id() == 1).unwrap();
+    assert_eq!(win.pending_sizing_mode(), SizingMode::Fullscreen);
+
+    check_ops_on_layout(&mut layout, [Op::ToggleGridOverview]);
+
+    assert!(!layout.is_grid_overview_open());
+    let (_, win) = layout.windows().find(|(_, win)| *win.id() == 1).unwrap();
+    assert_eq!(win.pending_sizing_mode(), SizingMode::Fullscreen);
+}
+
+#[test]
+fn grid_overview_preserves_maximized() {
+    let ops = [
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::MaximizeWindowToEdges { id: None },
+        Op::ToggleGridOverview,
+    ];
+
+    let mut layout = check_ops(ops);
+
+    assert!(layout.is_grid_overview_open());
+    let (_, win) = layout.windows().find(|(_, win)| *win.id() == 1).unwrap();
+    assert_eq!(win.pending_sizing_mode(), SizingMode::Maximized);
+
+    check_ops_on_layout(&mut layout, [Op::ToggleGridOverview]);
+
+    assert!(!layout.is_grid_overview_open());
+    let (_, win) = layout.windows().find(|(_, win)| *win.id() == 1).unwrap();
+    assert_eq!(win.pending_sizing_mode(), SizingMode::Maximized);
+}
+
+#[test]
+fn grid_navigation_does_not_activate_window_until_confirmed() {
+    let ops = [
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::ConsumeOrExpelWindowLeft { id: None },
+        Op::ToggleColumnTabbedDisplay,
+        Op::FocusWindow(1),
+        Op::ToggleGridOverview,
+    ];
+
+    let mut layout = check_ops(ops);
+    assert!(layout.is_grid_overview_open());
+    assert_eq!(
+        layout
+            .active_workspace()
+            .unwrap()
+            .active_window()
+            .unwrap()
+            .id(),
+        &1
+    );
+
+    layout.focus_right();
+
+    assert!(layout.is_grid_overview_open());
+    assert_eq!(layout.grid_focused_window_id(), Some(2));
+    assert_eq!(
+        layout
+            .active_workspace()
+            .unwrap()
+            .active_window()
+            .unwrap()
+            .id(),
+        &1
+    );
+
+    assert!(layout.confirm_grid_selection_for_window(&2));
+    assert_eq!(
+        layout
+            .active_workspace()
+            .unwrap()
+            .active_window()
+            .unwrap()
+            .id(),
+        &2
+    );
+}
+
+#[test]
+fn grid_closing_keeps_all_tabbed_items_visible() {
+    let layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::ConsumeOrExpelWindowLeft { id: None },
+        Op::ToggleColumnTabbedDisplay,
+        Op::ToggleGridOverview,
+    ]);
+
+    let scrolling = layout.active_workspace().unwrap().scrolling();
+    let item1 = scrolling.grid_item_for_window(&1).unwrap();
+    let item2 = scrolling.grid_item_for_window(&2).unwrap();
+
+    assert!(scrolling.grid_item_visible_when_closing(&item1));
+    assert!(scrolling.grid_item_visible_when_closing(&item2));
+}
+
+fn three_column_grid_layout(active: usize) -> Layout<TestWindow> {
+    check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(3),
+        },
+        Op::FocusWindow(active),
+    ])
+}
+
+#[test]
+fn grid_confirm_matches_normal_focus_view_offset_at_edges() {
+    let mut direct = three_column_grid_layout(1);
+    check_ops_on_layout(&mut direct, [Op::FocusWindow(3)]);
+    let expected_right = direct
+        .active_workspace()
+        .unwrap()
+        .scrolling()
+        .target_view_pos();
+
+    let mut grid = three_column_grid_layout(1);
+    check_ops_on_layout(&mut grid, [Op::ToggleGridOverview]);
+    grid.focus_right();
+    grid.verify_invariants();
+    grid.focus_right();
+    grid.verify_invariants();
+    assert_eq!(grid.grid_focused_window_id(), Some(3));
+    assert!(grid.confirm_grid_selection_for_window(&3));
+    grid.verify_invariants();
+    let actual_right = grid
+        .active_workspace()
+        .unwrap()
+        .scrolling()
+        .target_view_pos();
+    approx::assert_abs_diff_eq!(actual_right, expected_right, epsilon = 0.001);
+
+    let mut direct = three_column_grid_layout(3);
+    check_ops_on_layout(&mut direct, [Op::FocusWindow(1)]);
+    let expected_left = direct
+        .active_workspace()
+        .unwrap()
+        .scrolling()
+        .target_view_pos();
+
+    let mut grid = three_column_grid_layout(3);
+    check_ops_on_layout(&mut grid, [Op::ToggleGridOverview]);
+    grid.focus_left();
+    grid.verify_invariants();
+    grid.focus_left();
+    grid.verify_invariants();
+    assert_eq!(grid.grid_focused_window_id(), Some(1));
+    assert!(grid.confirm_grid_selection_for_window(&1));
+    grid.verify_invariants();
+    let actual_left = grid
+        .active_workspace()
+        .unwrap()
+        .scrolling()
+        .target_view_pos();
+    approx::assert_abs_diff_eq!(actual_left, expected_left, epsilon = 0.001);
 }
 
 #[test]

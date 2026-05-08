@@ -2989,8 +2989,7 @@ impl State {
                     && button == Some(MouseButton::Left)
                     && !pointer.is_grabbed()
                 {
-                    self.niri.layout.activate_window_silent(&window);
-                    self.niri.layout.grid_click_activated();
+                    self.niri.layout.confirm_grid_selection_for_window(&window);
                     self.niri.suppressed_keys.clear();
                     self.niri.queue_redraw_all();
                     return;

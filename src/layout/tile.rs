@@ -1538,6 +1538,10 @@ impl<W: LayoutElement> Tile<W> {
         &self.focus_ring
     }
 
+    pub fn focus_ring_mut(&mut self) -> &mut FocusRing {
+        &mut self.focus_ring
+    }
+
     pub fn options(&self) -> &Rc<Options> {
         &self.options
     }

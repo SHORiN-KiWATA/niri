@@ -11,6 +11,7 @@ use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::utils::{Logical, Point, Rectangle, Scale, Serial, Size};
 
 use super::closing_window::{ClosingWindow, ClosingWindowRenderElement};
+use super::grid_overview::GridItem;
 use super::monitor::InsertPosition;
 use super::tab_indicator::{TabIndicator, TabIndicatorRenderElement, TabInfo};
 use super::tile::{Tile, TileRenderElement, TileRenderSnapshot};
@@ -100,6 +101,19 @@ niri_render_elements! {
         ClosingWindow = ClosingWindowRenderElement,
         TabIndicator = TabIndicatorRenderElement,
     }
+}
+
+pub struct GridPreviewTile<'a, W: LayoutElement> {
+    pub tile: &'a Tile<W>,
+    pub pos: Point<f64, Logical>,
+    pub tile_idx: usize,
+}
+
+pub struct GridPreview<'a, W: LayoutElement> {
+    pub normal_pos: Point<f64, Logical>,
+    pub tiles: Vec<GridPreviewTile<'a, W>>,
+    pub tab_indicator: Option<&'a TabIndicator>,
+    pub tab_indicator_pos: Option<Point<f64, Logical>>,
 }
 
 /// Extra per-column data.
@@ -419,6 +433,178 @@ impl<W: LayoutElement> ScrollingSpace<W> {
 
     pub fn tiles_mut(&mut self) -> impl Iterator<Item = &mut Tile<W>> + '_ {
         self.columns.iter_mut().flat_map(|col| col.tiles.iter_mut())
+    }
+
+    pub fn grid_overview_items(&self) -> Vec<(GridItem<W>, Size<f64, Logical>)> {
+        let mut items = Vec::new();
+
+        for (col_idx, col) in self.columns.iter().enumerate() {
+            if col.display_mode == ColumnDisplay::Tabbed {
+                for (tile_idx, tile) in col.tiles.iter().enumerate() {
+                    items.push((
+                        GridItem::Tab {
+                            col_idx,
+                            tile_idx,
+                            window_id: tile.window().id().clone(),
+                        },
+                        tile.tile_size(),
+                    ));
+                }
+            } else {
+                let tile = &col.tiles[col.active_tile_idx];
+                items.push((
+                    GridItem::Column {
+                        col_idx,
+                        window_id: tile.window().id().clone(),
+                    },
+                    col.grid_preview_size(),
+                ));
+            }
+        }
+
+        items
+    }
+
+    pub fn grid_item_for_window(&self, window: &W::Id) -> Option<GridItem<W>> {
+        self.columns.iter().enumerate().find_map(|(col_idx, col)| {
+            let tile_idx = col.position(window)?;
+
+            if col.display_mode == ColumnDisplay::Tabbed {
+                Some(GridItem::Tab {
+                    col_idx,
+                    tile_idx,
+                    window_id: window.clone(),
+                })
+            } else {
+                Some(GridItem::Column {
+                    col_idx,
+                    window_id: window.clone(),
+                })
+            }
+        })
+    }
+
+    pub fn grid_preview(&self, item: &GridItem<W>) -> Option<GridPreview<'_, W>> {
+        self.grid_preview_at_view_pos(item, self.view_pos())
+    }
+
+    pub fn grid_preview_at_target(&self, item: &GridItem<W>) -> Option<GridPreview<'_, W>> {
+        self.grid_preview_at_view_pos(item, self.target_view_pos())
+    }
+
+    fn grid_preview_at_view_pos(
+        &self,
+        item: &GridItem<W>,
+        view_pos: f64,
+    ) -> Option<GridPreview<'_, W>> {
+        let (col_idx, tab_window) = match item {
+            GridItem::Column { col_idx, .. } => (*col_idx, None),
+            GridItem::Tab {
+                col_idx, window_id, ..
+            } => (*col_idx, Some(window_id)),
+            GridItem::Floating { .. } => return None,
+        };
+
+        let col = self.columns.get(col_idx)?;
+        let scale = self.scale;
+        let view_off = Point::from((-view_pos, 0.));
+        let col_off = Point::from((self.column_x(col_idx), 0.));
+        let col_render_off = col.render_offset();
+        let col_pos = view_off + col_off + col_render_off;
+        let col_pos = col_pos.to_physical_precise_round(scale).to_logical(scale);
+
+        let mut tiles = Vec::new();
+        let mut min_x = f64::MAX;
+        let mut min_y = f64::MAX;
+
+        if let Some(window) = tab_window {
+            for (tile_idx, (tile, tile_off)) in col.tiles().enumerate() {
+                if tile.window().id() == window {
+                    let pos = view_off + col_off + col_render_off + tile_off + tile.render_offset();
+                    let pos = pos.to_physical_precise_round(scale).to_logical(scale);
+
+                    min_x = min_x.min(pos.x);
+                    min_y = min_y.min(pos.y);
+                    tiles.push((tile, pos, tile_idx));
+                    break;
+                }
+            }
+        } else {
+            for (tile_idx, (tile, tile_off)) in col.tiles().enumerate() {
+                let pos = view_off + col_off + col_render_off + tile_off + tile.render_offset();
+                let pos = pos.to_physical_precise_round(scale).to_logical(scale);
+
+                min_x = min_x.min(pos.x);
+                min_y = min_y.min(pos.y);
+                tiles.push((tile, pos, tile_idx));
+            }
+        }
+
+        if tiles.is_empty() {
+            return None;
+        }
+
+        let normal_pos = Point::from((min_x, min_y));
+        let tiles = tiles
+            .into_iter()
+            .map(|(tile, pos, tile_idx)| GridPreviewTile {
+                tile,
+                pos: pos - normal_pos,
+                tile_idx,
+            })
+            .collect();
+
+        let tab_indicator = matches!(item, GridItem::Tab { .. })
+            .then_some(&col.tab_indicator)
+            .filter(|_| col.display_mode == ColumnDisplay::Tabbed && col.sizing_mode().is_normal());
+        let tab_indicator_pos = tab_indicator.map(|_| col_pos - normal_pos);
+
+        Some(GridPreview {
+            normal_pos,
+            tiles,
+            tab_indicator,
+            tab_indicator_pos,
+        })
+    }
+
+    pub fn grid_item_visible_when_closing(&self, item: &GridItem<W>) -> bool {
+        match item {
+            GridItem::Column { .. } | GridItem::Tab { .. } | GridItem::Floating { .. } => true,
+        }
+    }
+
+    pub fn update_grid_item_render_elements(
+        &mut self,
+        item: &GridItem<W>,
+        focused_window: Option<&W::Id>,
+        view_rect: Rectangle<f64, Logical>,
+    ) {
+        match item {
+            GridItem::Column { col_idx, .. } => {
+                let Some(col) = self.columns.get_mut(*col_idx) else {
+                    return;
+                };
+
+                for tile in &mut col.tiles {
+                    let is_active = focused_window == Some(tile.window().id());
+                    tile.update_render_elements(is_active, view_rect);
+                }
+            }
+            GridItem::Tab { window_id, .. } => {
+                let Some(tile) = self
+                    .columns
+                    .iter_mut()
+                    .flat_map(|col| col.tiles.iter_mut())
+                    .find(|tile| tile.window().id() == window_id)
+                else {
+                    return;
+                };
+
+                let is_active = focused_window == Some(tile.window().id());
+                tile.update_render_elements(is_active, view_rect);
+            }
+            GridItem::Floating { .. } => (),
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -796,23 +982,43 @@ impl<W: LayoutElement> ScrollingSpace<W> {
     }
 
     fn activate_column_with_anim_config(&mut self, idx: usize, config: niri_config::Animation) {
+        self.activate_column_with_source_and_anim_config(
+            idx,
+            Some(self.active_column_idx),
+            None,
+            config,
+        );
+    }
+
+    fn activate_column_with_source_and_anim_config(
+        &mut self,
+        idx: usize,
+        prev_idx: Option<usize>,
+        target_x: Option<f64>,
+        config: niri_config::Animation,
+    ) {
+        let forced_source = prev_idx.is_some_and(|prev_idx| prev_idx != idx) || target_x.is_some();
         if self.active_column_idx == idx
+            && !forced_source
             // During a DnD scroll, animate even when activating the same window, for DnD hold.
             && (self.columns.is_empty() || !self.view_offset.is_dnd_scroll())
         {
             return;
         }
 
+        let changed_column = self.active_column_idx != idx;
         self.animate_view_offset_to_column_with_config(
-            None,
+            target_x,
             idx,
-            Some(self.active_column_idx),
+            prev_idx.or(Some(self.active_column_idx)),
             config,
         );
 
-        if self.active_column_idx != idx {
+        if changed_column {
             self.active_column_idx = idx;
+        }
 
+        if changed_column || forced_source {
             // A different column was activated; reset the flag.
             self.activate_prev_column_on_removal = None;
             self.view_offset_to_restore = None;
@@ -1465,6 +1671,58 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         self.activate_column(column_idx);
 
         true
+    }
+
+    pub fn activate_window_from_grid(
+        &mut self,
+        window: &W::Id,
+        previous_window: Option<&W::Id>,
+        previous_view_pos: Option<f64>,
+    ) -> bool {
+        let column_idx = self.columns.iter().position(|col| col.contains(window));
+        let Some(column_idx) = column_idx else {
+            return false;
+        };
+        let previous_idx = previous_window
+            .and_then(|window| self.columns.iter().position(|col| col.contains(window)));
+
+        let column = &mut self.columns[column_idx];
+        column.activate_window(window);
+        self.activate_column_from_grid(column_idx, previous_idx, previous_view_pos);
+
+        true
+    }
+
+    pub fn activate_tile_in_column(&mut self, col_idx: usize, tile_idx: usize) -> bool {
+        let Some(column) = self.columns.get_mut(col_idx) else {
+            return false;
+        };
+
+        if !column.activate_idx(tile_idx) {
+            return false;
+        }
+
+        self.data[col_idx].update(column);
+
+        true
+    }
+
+    fn activate_column_from_grid(
+        &mut self,
+        idx: usize,
+        prev_idx: Option<usize>,
+        target_x: Option<f64>,
+    ) {
+        let new_view_offset = self.compute_new_view_offset_for_column(target_x, idx, prev_idx);
+        self.view_offset = ViewOffset::Static(new_view_offset);
+
+        if self.active_column_idx != idx {
+            self.active_column_idx = idx;
+        }
+
+        self.activate_prev_column_on_removal = None;
+        self.view_offset_to_restore = None;
+        self.interactive_resize = None;
     }
 
     pub fn set_active_window_silent(&mut self, window: &W::Id) -> bool {
@@ -2389,6 +2647,14 @@ impl<W: LayoutElement> ScrollingSpace<W> {
 
     pub fn columns(&self) -> impl Iterator<Item = &Column<W>> {
         self.columns.iter()
+    }
+
+    pub fn column_tile_count(&self, col_idx: usize) -> usize {
+        self.columns.get(col_idx).map(|c| c.tiles.len()).unwrap_or(0)
+    }
+
+    pub fn column_active_tile_idx(&self, col_idx: usize) -> usize {
+        self.columns.get(col_idx).map(|c| c.active_tile_idx).unwrap_or(0)
     }
 
     fn columns_mut(&mut self) -> impl Iterator<Item = (&mut Column<W>, f64)> + '_ {
@@ -5318,6 +5584,27 @@ impl<W: LayoutElement> Column<W> {
     pub fn tiles(&self) -> impl Iterator<Item = (&Tile<W>, Point<f64, Logical>)> + '_ {
         let offsets = self.tile_offsets_iter(self.data.iter().copied());
         zip(&self.tiles, offsets)
+    }
+
+    fn grid_preview_size(&self) -> Size<f64, Logical> {
+        let mut min_x = f64::MAX;
+        let mut min_y = f64::MAX;
+        let mut max_x = f64::MIN;
+        let mut max_y = f64::MIN;
+
+        for (tile, pos) in self.tiles() {
+            let size = tile.tile_size();
+            min_x = min_x.min(pos.x);
+            min_y = min_y.min(pos.y);
+            max_x = max_x.max(pos.x + size.w);
+            max_y = max_y.max(pos.y + size.h);
+        }
+
+        if min_x == f64::MAX {
+            return Size::from((1., 1.));
+        }
+
+        Size::from(((max_x - min_x).max(1.), (max_y - min_y).max(1.)))
     }
 
     fn tiles_mut(&mut self) -> impl Iterator<Item = (&mut Tile<W>, Point<f64, Logical>)> + '_ {

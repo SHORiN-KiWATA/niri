@@ -1035,7 +1035,9 @@ impl<W: LayoutElement> Layout<W> {
                     }
                 }
 
-                mon.workspaces[ws_idx].on_window_added_in_grid();
+                if let Some(ws) = mon.workspaces.iter_mut().find(|ws| ws.has_window(&id)) {
+                    ws.on_window_added_in_grid();
+                }
 
                 Some(&mon.output)
             }
@@ -5123,7 +5125,6 @@ impl<W: LayoutElement> Layout<W> {
         let should_open = !self.is_grid_overview_open();
         if should_open {
             if let Some(ws) = self.active_workspace_mut() {
-                ws.deactivate_special_sizing_for_grid();
                 ws.toggle_grid_overview();
             }
         } else {
@@ -5156,25 +5157,47 @@ impl<W: LayoutElement> Layout<W> {
         let Some(id) = self.grid_focused_window_id() else {
             return;
         };
-        self.activate_window_silent(&id);
+        self.confirm_grid_selection_for_window(&id);
+    }
+
+    pub fn confirm_grid_selection_for_window(&mut self, id: &W::Id) -> bool {
         if let Some(ws) = self.active_workspace_mut() {
-            ws.fix_floating_state_for_active();
-            ws.refresh_grid_entry_positions();
+            if !ws.is_grid_overview_open() {
+                return false;
+            }
+
+            if !ws.set_grid_focus_for_window(id) {
+                return false;
+            }
+
+            if !ws.activate_window_from_grid(id) {
+                return false;
+            }
+
+            ws.set_grid_focus_for_window(id);
+
             ws.close_grid_overview();
+            return true;
         }
+
+        false
+    }
+
+    pub fn dismiss_grid_overview(&mut self) -> bool {
+        if let Some(ws) = self.active_workspace_mut() {
+            return ws.close_grid_overview();
+        }
+
+        false
     }
 
     pub fn grid_click_activated(&mut self) {
         if let Some(ws) = self.active_workspace_mut() {
             if let Some(active_id) = ws.active_window().map(|w| w.id().clone()) {
-                if let Some(ref mut go) = ws.grid_overview {
-                    if let Some((row, col)) = go.find_grid_index(&active_id) {
-                        go.focus = (row, col);
-                    }
-                }
+                ws.set_grid_focus_for_window(&active_id);
+                ws.activate_window_from_grid(&active_id);
             }
             ws.fix_floating_state_for_active();
-            ws.refresh_grid_entry_positions();
             ws.close_grid_overview();
         }
     }

@@ -108,8 +108,18 @@ impl ClosingWindow {
         anim: Animation,
     ) -> anyhow::Result<Self> {
         let _span = tracy_client::span!("ClosingWindow::new");
+        let snapshot_size: Size<f64, Logical> =
+            Size::from((snapshot.size.w.max(1.), snapshot.size.h.max(1.)));
+        let snapshot_scale = (geo_size.w / snapshot_size.w).max(0.);
 
         let mut render_to_texture = |elements: Vec<E>| -> anyhow::Result<_> {
+            let elements: Vec<_> = elements
+                .into_iter()
+                .map(|elem| {
+                    RescaleRenderElement::from_element(elem, Point::from((0, 0)), snapshot_scale)
+                })
+                .collect();
+
             let (texture, _sync_point, geo) = render_to_encompassing_texture(
                 renderer,
                 scale,

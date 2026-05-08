@@ -1008,6 +1008,27 @@ impl State {
 
     pub fn confirm_mru(&mut self) {
         if let Some(window) = self.niri.close_mru(MruCloseRequest::Confirm) {
+            if self.niri.layout.is_grid_overview_open() {
+                let active_output = self.niri.layout.active_output().cloned();
+                if self.niri.layout.confirm_grid_selection_for_window(&window) {
+                    let new_active = self.niri.layout.active_output().cloned();
+                    if new_active != active_output {
+                        if let Some(output) = new_active {
+                            if !self.maybe_warp_cursor_to_focus_centered() {
+                                self.move_cursor_to_output(&output);
+                            }
+                        }
+                    } else {
+                        self.maybe_warp_cursor_to_focus();
+                    }
+
+                    self.niri.queue_redraw_all();
+                    return;
+                }
+
+                self.niri.layout.dismiss_grid_overview();
+            }
+
             self.focus_window(&window);
         }
     }

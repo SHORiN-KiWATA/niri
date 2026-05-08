@@ -21,12 +21,13 @@ use smithay::wayland::compositor::with_states;
 use smithay::wayland::shell::xdg::SurfaceCachedState;
 
 use super::floating::{FloatingSpace, FloatingSpaceRenderElement};
-use super::grid_overview::{GridDirection, GridOverview};
+use super::grid_overview::{GridDirection, GridEntryInfo, GridItem, GridOverview};
 use super::scrolling::{
     Column, ColumnWidth, ScrollDirection, ScrollingSpace, ScrollingSpaceRenderElement,
 };
 use super::shadow::Shadow;
-use super::tile::{Tile, TileRenderSnapshot};
+use super::tab_indicator::TabIndicator;
+use super::tile::{Tile, TileRenderElement, TileRenderSnapshot};
 use super::{
     ActivateWindow, HitType, InsertPosition, InteractiveResizeData, LayoutElement, Options,
     RemovedTile, SizeFrac,
@@ -407,13 +408,9 @@ impl<W: LayoutElement> Workspace<W> {
     pub fn toggle_grid_overview(&mut self) {
         let was_open = self.is_grid_overview_open();
         if !was_open {
-            let tiles: Vec<_> = self
-                .tiles_in_column_order()
-                .into_iter()
-                .map(|t| (t.window().id().clone(), t.tile_size()))
-                .collect();
+            let items = self.grid_overview_items();
 
-            if tiles.is_empty() {
+            if items.is_empty() {
                 return;
             }
 
@@ -421,12 +418,22 @@ impl<W: LayoutElement> Workspace<W> {
             go.saved_active_window_id = self.active_window().map(|w| w.id().clone());
             go.saved_view_offset = self.scrolling.view_pos();
 
-            for (id, _) in &tiles {
-                let normal = self.tile_normal_render_pos_by_id(id);
-                go.entry_positions.push((id.clone(), normal));
+            for (item, _) in &items {
+                let normal = self
+                    .grid_item_normal_render_pos(item, false)
+                    .unwrap_or_else(|| Point::from((0., 0.)));
+                go.entry_positions.push((item.clone(), normal));
             }
 
-            go.compute_layout(&tiles, self.working_area);
+            go.compute_layout(&items, self.working_area);
+
+            // Initialize column_tile_focus for Column items.
+            for (item, _) in &go.layout.entries {
+                if let GridItem::Column { col_idx, .. } = item {
+                    let active_tile = self.scrolling.column_active_tile_idx(*col_idx);
+                    go.column_tile_focus.push((*col_idx, active_tile));
+                }
+            }
 
             let focus_id = self.active_window().map(|w| w.id().clone());
             if let Some(ref fid) = focus_id {
@@ -437,7 +444,11 @@ impl<W: LayoutElement> Workspace<W> {
 
             go.toggle();
             self.grid_overview = Some(go);
-        } else if let Some(ref mut go) = self.grid_overview {
+        } else if self.grid_overview.is_some() {
+            self.snapshot_grid_close_start_visuals();
+            let Some(ref mut go) = self.grid_overview else {
+                return;
+            };
             go.toggle();
         }
     }
@@ -459,10 +470,22 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn grid_navigate(&mut self, dir: GridDirection) {
-        if let Some(ref mut go) = self.grid_overview {
-            go.navigate(dir);
-            if let Some(id) = go.focused_id() {
-                self.scrolling.set_active_window_silent(&id);
+        let tile_changed = self.grid_overview.as_mut().and_then(|go| {
+            go.navigate(dir, |col_idx| self.scrolling.column_tile_count(col_idx))
+        });
+
+        if let Some((col_idx, new_tile_idx)) = tile_changed {
+            // Sync scrolling layout: activate the new tile in the column.
+            self.scrolling.activate_tile_in_column(col_idx, new_tile_idx);
+
+            // Update grid_overview state.
+            if let Some(go) = self.grid_overview.as_mut() {
+                if let Some(col) = self.scrolling.columns().nth(col_idx) {
+                    if let Some((tile, _)) = col.tiles().nth(new_tile_idx) {
+                        let window_id = tile.window().id().clone();
+                        go.set_column_tile_focus(col_idx, new_tile_idx, window_id);
+                    }
+                }
             }
         }
     }
@@ -478,11 +501,13 @@ impl<W: LayoutElement> Workspace<W> {
                 None => return,
             };
             go.layout
-                .tiles
+                .entries
                 .iter()
-                .map(|(id, _)| {
-                    let pos = self.tile_normal_render_pos_by_id(id);
-                    (id.clone(), pos)
+                .map(|(item, _)| {
+                    let pos = self
+                        .grid_item_normal_render_pos(item, true)
+                        .unwrap_or_else(|| Point::from((0., 0.)));
+                    (item.clone(), pos)
                 })
                 .collect()
         };
@@ -491,20 +516,43 @@ impl<W: LayoutElement> Workspace<W> {
         }
     }
 
+    fn snapshot_grid_close_start_visuals(&mut self) {
+        let visuals: Vec<_> = {
+            let go = match &self.grid_overview {
+                Some(g) if g.open => g,
+                _ => return,
+            };
+
+            go.layout
+                .entries
+                .iter()
+                .map(|(item, info)| {
+                    let fallback = self
+                        .grid_item_normal_render_pos(item, false)
+                        .unwrap_or(info.target_pos);
+                    let (pos, scale) = go.entry_visual_transform(item, info, fallback);
+                    (item.clone(), pos, scale)
+                })
+                .collect()
+        };
+
+        if let Some(ref mut go) = self.grid_overview {
+            go.snapshot_close_start_visuals(visuals);
+        }
+    }
+
     pub fn on_window_closed_in_grid(&mut self) {
         self.recompute_grid_overview_layout();
+        self.sync_grid_focus_to_active_window();
     }
 
     pub fn on_window_added_in_grid(&mut self) {
         self.recompute_grid_overview_layout();
+        self.sync_grid_focus_to_active_window();
     }
 
     fn recompute_grid_overview_layout(&mut self) {
-        let tiles: Vec<_> = self
-            .tiles_in_column_order()
-            .into_iter()
-            .map(|t| (t.window().id().clone(), t.tile_size()))
-            .collect();
+        let items = self.grid_overview_items();
         let working_area = self.working_area;
 
         let mut go = match self.grid_overview.take() {
@@ -516,17 +564,41 @@ impl<W: LayoutElement> Workspace<W> {
             self.grid_overview = Some(go);
             return;
         }
-        if tiles.is_empty() {
+        if items.is_empty() {
             return;
         }
 
-        go.compute_layout(&tiles, working_area);
-        self.grid_overview = Some(go);
-    }
+        go.compute_layout(&items, working_area);
 
-    pub fn deactivate_special_sizing_for_grid(&mut self) {
-        self.scrolling.deactivate_fullscreen();
-        self.scrolling.deactivate_maximized();
+        // Sync column_tile_focus with new layout.
+        let valid_col_indices: Vec<_> = go
+            .layout
+            .entries
+            .iter()
+            .filter_map(|(item, _)| {
+                if let GridItem::Column { col_idx, .. } = item {
+                    Some(*col_idx)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        go.column_tile_focus.retain(|(col_idx, _)| {
+            valid_col_indices.contains(col_idx)
+        });
+        for col_idx in valid_col_indices {
+            let tile_count = self.scrolling.column_tile_count(col_idx);
+            if let Some(entry) = go.column_tile_focus.iter_mut().find(|(c, _)| *c == col_idx) {
+                if entry.1 >= tile_count {
+                    entry.1 = self.scrolling.column_active_tile_idx(col_idx);
+                }
+            } else {
+                let active_tile = self.scrolling.column_active_tile_idx(col_idx);
+                go.column_tile_focus.push((col_idx, active_tile));
+            }
+        }
+
+        self.grid_overview = Some(go);
     }
 
     pub fn fix_floating_state_for_active(&mut self) {
@@ -559,27 +631,106 @@ impl<W: LayoutElement> Workspace<W> {
             .map_or(false, |g| g.are_animations_ongoing())
     }
 
-    fn tiles_in_column_order(&self) -> Vec<&Tile<W>> {
-        let mut tiles: Vec<&Tile<W>> = self.scrolling.tiles().collect();
-        tiles.extend(self.floating.tiles());
-        tiles
+    fn grid_overview_items(&self) -> Vec<(GridItem<W>, Size<f64, Logical>)> {
+        let mut items = self.scrolling.grid_overview_items();
+        items.extend(self.floating.tiles().map(|tile| {
+            (
+                GridItem::Floating {
+                    window_id: tile.window().id().clone(),
+                },
+                tile.tile_size(),
+            )
+        }));
+        items
     }
 
-    fn tile_normal_render_pos_by_id(&self, id: &W::Id) -> Point<f64, Logical> {
-        for (t, pos, _) in self.scrolling.tiles_with_render_positions() {
-            if *t.window().id() == *id {
-                return pos;
-            }
+    fn grid_item_for_window(&self, id: &W::Id) -> Option<GridItem<W>> {
+        if self.floating.has_window(id) {
+            return Some(GridItem::Floating {
+                window_id: id.clone(),
+            });
         }
-        for (t, pos) in self.floating.tiles_with_render_positions() {
-            if *t.window().id() == *id {
-                return pos;
+
+        self.scrolling.grid_item_for_window(id)
+    }
+
+    fn grid_item_normal_render_pos(
+        &self,
+        item: &GridItem<W>,
+        use_target_view_pos: bool,
+    ) -> Option<Point<f64, Logical>> {
+        match item {
+            GridItem::Column { .. } | GridItem::Tab { .. } => {
+                let preview = if use_target_view_pos {
+                    self.scrolling.grid_preview_at_target(item)
+                } else {
+                    self.scrolling.grid_preview(item)
+                };
+                preview.map(|preview| preview.normal_pos)
             }
+            GridItem::Floating { window_id } => self
+                .floating
+                .tiles_with_render_positions()
+                .find_map(|(tile, pos)| (tile.window().id() == window_id).then_some(pos)),
         }
-        Point::from((0., 0.))
+    }
+
+    fn grid_item_visible_when_closing(&self, item: &GridItem<W>) -> bool {
+        match item {
+            GridItem::Column { .. } | GridItem::Tab { .. } => {
+                self.scrolling.grid_item_visible_when_closing(item)
+            }
+            GridItem::Floating { .. } => true,
+        }
+    }
+
+    fn grid_item_visual_transform(
+        &self,
+        go: &GridOverview<W>,
+        item: &GridItem<W>,
+        info: &GridEntryInfo,
+    ) -> (Point<f64, Logical>, f64) {
+        let fallback_pos = self
+            .grid_item_normal_render_pos(item, !go.open)
+            .unwrap_or(info.target_pos);
+        go.entry_visual_transform(item, info, fallback_pos)
+    }
+
+    pub fn set_grid_focus_for_window(&mut self, id: &W::Id) -> bool {
+        let Some(item) = self.grid_item_for_window(id) else {
+            return false;
+        };
+
+        let Some(go) = self.grid_overview.as_mut() else {
+            return false;
+        };
+
+        let Some((row, col)) = go.find_grid_index_for_item(&item) else {
+            return false;
+        };
+
+        go.set_focus((row, col));
+        go.set_focused_window_id(id.clone());
+        true
+    }
+
+    fn sync_grid_focus_to_active_window(&mut self) {
+        let Some(id) = self.active_window().map(|w| w.id().clone()) else {
+            return;
+        };
+
+        self.set_grid_focus_for_window(&id);
     }
 
     pub fn update_render_elements(&mut self, is_active: bool) {
+        // Clear lingering focus-ring width overrides.
+        for tile in self.scrolling.tiles_mut() {
+            tile.focus_ring_mut().clear_width_override();
+        }
+        for tile in self.floating.tiles_mut() {
+            tile.focus_ring_mut().clear_width_override();
+        }
+
         self.scrolling
             .update_render_elements(is_active && !self.floating_is_active.get());
 
@@ -589,16 +740,41 @@ impl<W: LayoutElement> Workspace<W> {
 
         if let Some(ref go) = self.grid_overview {
             if go.open || go.progress.is_some() {
-                for (id, info) in go.layout.tiles.iter() {
+                let is_closing = !go.open;
+
+                for (item, info) in go.layout.entries.iter() {
+                    if is_closing && !self.grid_item_visible_when_closing(item) {
+                        continue;
+                    }
+
                     let is_grid_focused = info.row == go.focus.0 && info.col == go.focus.1;
-                    for tile in self.scrolling.tiles_mut() {
-                        if *tile.window().id() == *id {
-                            tile.update_render_elements(is_grid_focused, view_rect);
-                            break;
+                    let focused_window = is_grid_focused.then(|| item.window_id());
+
+                    if is_grid_focused {
+                        let target_scale = info.target_scale;
+                        let window_id = item.window_id();
+                        for tile in self.scrolling.tiles_mut().chain(self.floating.tiles_mut()) {
+                            if tile.window().id() == window_id {
+                                let normal_width = tile.focus_ring().config().width;
+                                if normal_width > 0. {
+                                    let max_width = normal_width * 2.;
+                                    let grid_width = (normal_width
+                                        / target_scale.max(0.0001).sqrt())
+                                    .clamp(normal_width, max_width);
+                                    tile.focus_ring_mut().set_width_override(grid_width);
+                                }
+                                break;
+                            }
                         }
                     }
+
+                    self.scrolling.update_grid_item_render_elements(
+                        item,
+                        focused_window,
+                        view_rect,
+                    );
                     for tile in self.floating.tiles_mut() {
-                        if *tile.window().id() == *id {
+                        if tile.window().id() == item.window_id() {
                             tile.update_render_elements(is_grid_focused, view_rect);
                             break;
                         }
@@ -848,8 +1024,21 @@ impl<W: LayoutElement> Workspace<W> {
                         self.floating_is_active = FloatingActive::Yes;
                     }
                 } else {
+                    let grid_col_idx = self.grid_overview.as_ref().and_then(|go| {
+                        if !go.open {
+                            return None;
+                        }
+                        let idx = go.focus.0 * go.layout.cols + go.focus.1;
+                        let (item, _) = go.layout.entries.get(idx)?;
+                        match item {
+                            GridItem::Column { col_idx, .. } => Some(*col_idx),
+                            GridItem::Tab { col_idx, .. } => Some(*col_idx),
+                            GridItem::Floating { .. } => None,
+                        }
+                    });
+
                     self.scrolling
-                        .add_tile(None, tile, activate, width, is_full_width, None);
+                        .add_tile(grid_col_idx.map(|c| c + 1), tile, activate, width, is_full_width, None);
 
                     if activate {
                         self.floating_is_active = FloatingActive::No;
@@ -1842,7 +2031,7 @@ impl<W: LayoutElement> Workspace<W> {
     pub fn active_window_visual_rectangle(&self) -> Option<Rectangle<f64, Logical>> {
         if let Some(go) = &self.grid_overview {
             if go.is_fully_open() {
-                if let Some(info) = go.find_grid_info(&go.focused_id()?) {
+                if let Some(info) = go.focused_info() {
                     return Some(Rectangle::new(info.target_pos, info.target_size));
                 }
             }
@@ -1921,99 +2110,189 @@ impl<W: LayoutElement> Workspace<W> {
         let scale = self.scale.fractional_scale();
         let overview_zoom = base_xray_pos.zoom;
 
-        let (layout, p, focus, is_closing) = {
-            let go = match &self.grid_overview {
-                Some(g) => g,
-                None => return,
-            };
-            (go.layout.clone(), go.progress_value(), go.focus, !go.open)
+        let go = match &self.grid_overview {
+            Some(g) => g,
+            None => return,
         };
+        let layout = &go.layout;
+        let focus = go.focus;
+        let is_closing = !go.open;
+        let should_render_grid_item =
+            |item: &GridItem<W>| !is_closing || self.grid_item_visible_when_closing(item);
 
-        let render_tiles: Vec<_> = self.tiles_with_render_positions().collect();
+        {
+            let render_tile = |ctx: &mut RenderCtx<R>,
+                               push: &mut dyn FnMut(WorkspaceRenderElement<R>),
+                               tile: &Tile<W>,
+                               tile_rel_pos: Point<f64, Logical>,
+                               item_visual_pos: Point<f64, Logical>,
+                               item_visual_scale: f64,
+                               render_focus_ring: bool,
+                               suppress_decorations: bool| {
+                let geo = base_xray_pos.pos_in_backdrop.upscale(overview_zoom);
+                let tile_visual_pos = item_visual_pos + tile_rel_pos.upscale(item_visual_scale);
+                let xray_pos = XrayPos::new(
+                    geo + tile_visual_pos.upscale(overview_zoom),
+                    item_visual_scale * overview_zoom,
+                );
 
-        for (tile, tile_normal_pos, visible) in &render_tiles {
-            if !visible && tile.alpha_animation.is_none() {
-                continue;
-            }
-            let id = tile.window().id();
-            let info = match layout.tiles.iter().find(|(eid, _)| *eid == *id) {
-                Some((_, i)) => i,
-                None => continue,
-            };
-
-            let normal_pos = if is_closing {
-                *tile_normal_pos
-            } else {
-                self.grid_overview
-                    .as_ref()
-                    .and_then(|go| {
-                        go.entry_positions
-                            .iter()
-                            .find(|(eid, _)| *eid == *id)
-                            .map(|(_, pos)| *pos)
-                    })
-                    .unwrap_or(*tile_normal_pos)
-            };
-
-            let anim_p = self
-                .grid_overview
-                .as_ref()
-                .and_then(|go| go.rearrange_anim.as_ref().map(|a| a.value()))
-                .unwrap_or(p);
-
-            let lerp_x = normal_pos.x + (info.target_pos.x - normal_pos.x) * anim_p;
-            let lerp_y = normal_pos.y + (info.target_pos.y - normal_pos.y) * anim_p;
-            let lerp_pos = Point::from((lerp_x, lerp_y));
-
-            let entry_scale = if self
-                .grid_overview
-                .as_ref()
-                .and_then(|go| go.rearrange_anim.as_ref())
-                .is_some()
-            {
-                self.grid_overview
-                    .as_ref()
-                    .and_then(|go| {
-                        go.entry_scales
-                            .iter()
-                            .find(|(eid, _)| *eid == *id)
-                            .map(|(_, s)| *s)
-                    })
-                    .unwrap_or(1.0)
-            } else {
-                1.0
-            };
-            let final_scale = if info.target_scale < entry_scale {
-                (entry_scale + (info.target_scale - entry_scale) * anim_p).max(info.target_scale)
-            } else {
-                (entry_scale + (info.target_scale - entry_scale) * anim_p).min(info.target_scale)
-            };
-            let is_focused = info.row == focus.0 && info.col == focus.1;
-
-            let geo = base_xray_pos.pos_in_backdrop.upscale(overview_zoom);
-            let xray_pos = XrayPos::new(
-                geo + lerp_pos.upscale(overview_zoom),
-                final_scale * overview_zoom,
-            );
-
-            tile.render(
-                ctx.r(),
-                Point::from((0., 0.)),
-                xray_pos,
-                is_focused,
-                &mut |elem| {
+                let mut push_grid_elem = |elem: TileRenderElement<R>| {
+                    if suppress_decorations {
+                        match elem {
+                            TileRenderElement::Shadow(_)
+                            | TileRenderElement::FocusRing(_)
+                            | TileRenderElement::Border(_) => return,
+                            _ => {}
+                        }
+                    }
                     let elem: ScrollingSpaceRenderElement<R> = elem.into();
                     let origin = Point::<i32, smithay::utils::Physical>::from((0, 0));
-                    let elem = RescaleRenderElement::from_element(elem, origin, final_scale);
-                    let phys_pos = lerp_pos.to_physical_precise_round(scale);
+                    let elem = RescaleRenderElement::from_element(elem, origin, item_visual_scale);
+                    let phys_pos = item_visual_pos.to_physical_precise_round(scale);
                     let elem =
                         RelocateRenderElement::from_element(elem, phys_pos, Relocate::Relative);
                     push(elem.into());
-                },
-            );
+                };
+
+                tile.render(
+                    ctx.r(),
+                    tile_rel_pos,
+                    xray_pos,
+                    render_focus_ring,
+                    &mut push_grid_elem,
+                );
+            };
+
+            let render_tab_indicator =
+                |ctx: &mut RenderCtx<R>,
+                 push: &mut dyn FnMut(WorkspaceRenderElement<R>),
+                 tab_indicator: &TabIndicator,
+                 tab_indicator_rel_pos: Point<f64, Logical>,
+                 item_visual_pos: Point<f64, Logical>,
+                 item_visual_scale: f64| {
+                    let mut push_grid_elem =
+                        |elem: super::tab_indicator::TabIndicatorRenderElement| {
+                            let elem: ScrollingSpaceRenderElement<R> = elem.into();
+                            let origin = Point::<i32, smithay::utils::Physical>::from((0, 0));
+                            let elem =
+                                RescaleRenderElement::from_element(elem, origin, item_visual_scale);
+                            let phys_pos = item_visual_pos.to_physical_precise_round(scale);
+                            let elem = RelocateRenderElement::from_element(
+                                elem,
+                                phys_pos,
+                                Relocate::Relative,
+                            );
+                            push(elem.into());
+                        };
+
+                    tab_indicator.render(ctx.renderer, tab_indicator_rel_pos, &mut push_grid_elem);
+                };
+
+            let mut render_grid_item = |ctx: &mut RenderCtx<R>,
+                                        item: &GridItem<W>,
+                                        info: &GridEntryInfo,
+                                        is_focused: bool| {
+                let (visual_pos, visual_scale) = go.entry_visual_transform(
+                    item,
+                    info,
+                    self.grid_item_normal_render_pos(item, false)
+                        .unwrap_or(info.target_pos),
+                );
+
+                let is_tab = matches!(item, GridItem::Tab { .. });
+                let suppress_decorations = is_closing && is_tab && !is_focused;
+
+                match item {
+                    GridItem::Column { col_idx, .. } => {
+                        let Some(preview) = self.scrolling.grid_preview(item) else {
+                            return;
+                        };
+                        let grid_tile_idx = go.get_column_tile_focus(*col_idx);
+                        for preview_tile in preview.tiles {
+                            let is_grid_focused = preview_tile.tile_idx == grid_tile_idx;
+                            render_tile(
+                                ctx,
+                                push,
+                                preview_tile.tile,
+                                preview_tile.pos,
+                                visual_pos,
+                                visual_scale,
+                                is_focused && is_grid_focused,
+                                false,
+                            );
+                        }
+                    }
+                    GridItem::Tab { window_id, .. } => {
+                        let Some(preview) = self.scrolling.grid_preview(item) else {
+                            return;
+                        };
+                        for preview_tile in preview.tiles {
+                            render_tile(
+                                ctx,
+                                push,
+                                preview_tile.tile,
+                                preview_tile.pos,
+                                visual_pos,
+                                visual_scale,
+                                is_focused && preview_tile.tile.window().id() == window_id,
+                                suppress_decorations,
+                            );
+                        }
+
+                        if is_closing {
+                            if let (Some(tab_indicator), Some(tab_indicator_pos)) =
+                                (preview.tab_indicator, preview.tab_indicator_pos)
+                            {
+                                render_tab_indicator(
+                                    ctx,
+                                    push,
+                                    tab_indicator,
+                                    tab_indicator_pos,
+                                    visual_pos,
+                                    visual_scale,
+                                );
+                            }
+                        }
+                    }
+                    GridItem::Floating { window_id } => {
+                        let Some((tile, _)) = self
+                            .floating
+                            .tiles_with_render_positions()
+                            .find(|(tile, _)| tile.window().id() == window_id)
+                        else {
+                            return;
+                        };
+
+                        render_tile(
+                            ctx,
+                            push,
+                            tile,
+                            Point::from((0., 0.)),
+                            visual_pos,
+                            visual_scale,
+                            is_focused,
+                            false,
+                        );
+                    }
+                }
+            };
+
+            for (item, info) in &layout.entries {
+                let is_focused = info.row == focus.0 && info.col == focus.1;
+                if is_focused && should_render_grid_item(item) {
+                    render_grid_item(&mut ctx, item, info, true);
+                }
+            }
+
+            for (item, info) in &layout.entries {
+                let is_focused = info.row == focus.0 && info.col == focus.1;
+                if !is_focused && should_render_grid_item(item) {
+                    render_grid_item(&mut ctx, item, info, false);
+                }
+            }
         }
 
-        // 渲染正在关闭的窗口
+        // Render closing windows behind live grid tiles.
         let view_rect = Rectangle::new(Point::from((0., 0.)), self.view_size);
         for closing in self.scrolling.closing_windows() {
             let elem = closing.render(ctx.as_gles(), view_rect, Scale::from(scale));
@@ -2030,6 +2309,14 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn render_above_top_layer(&self) -> bool {
+        if self
+            .grid_overview
+            .as_ref()
+            .is_some_and(|go| go.open || go.progress.is_some() || go.are_animations_ongoing())
+        {
+            return false;
+        }
+
         self.scrolling.render_above_top_layer()
     }
 
@@ -2082,15 +2369,40 @@ impl<W: LayoutElement> Workspace<W> {
         window: &W::Id,
         blocker: TransactionBlocker,
     ) {
-        if let Some(info) = self
-            .grid_overview
-            .as_ref()
-            .filter(|go| go.open)
-            .and_then(|go| go.find_grid_info(window))
-        {
-            let tile_size = info.target_size;
-            let tile_pos = info.target_pos;
-            if self.floating.has_window(window) {
+        let grid_target = {
+            let go = self.grid_overview.as_ref().filter(|go| go.open);
+            go.and_then(|go| {
+                let item = self.grid_item_for_window(window)?;
+                let (_, info) = go
+                    .layout
+                    .entries
+                    .iter()
+                    .find(|(entry, _)| entry.matches_animation_key(&item))?;
+                let (visual_pos, visual_scale) = self.grid_item_visual_transform(go, &item, info);
+
+                if self.floating.has_window(window) {
+                    let tile_size = self
+                        .floating
+                        .tiles()
+                        .find(|tile| tile.window().id() == window)
+                        .map(|tile| tile.tile_size().upscale(visual_scale))
+                        .unwrap_or(info.target_size);
+                    return Some((true, tile_size, visual_pos));
+                }
+
+                let preview = self.scrolling.grid_preview(&item)?;
+                let preview_tile = preview
+                    .tiles
+                    .into_iter()
+                    .find(|tile| tile.tile.window().id() == window)?;
+                let tile_size = preview_tile.tile.tile_size().upscale(visual_scale);
+                let tile_pos = visual_pos + preview_tile.pos.upscale(visual_scale);
+                Some((false, tile_size, tile_pos))
+            })
+        };
+
+        if let Some((is_floating, tile_size, tile_pos)) = grid_target {
+            if is_floating {
                 self.floating.start_close_animation_for_window_at(
                     renderer, window, tile_size, tile_pos, blocker,
                 );
@@ -2133,14 +2445,44 @@ impl<W: LayoutElement> Workspace<W> {
             return None;
         }
 
-        for (id, info) in &go.layout.tiles {
-            let x = info.target_pos.x;
-            let y = info.target_pos.y;
-            let w = info.target_size.w.max(10.);
-            let h = info.target_size.h.max(10.);
+        for pass in 0..3 {
+            for (item, info) in &go.layout.entries {
+                let is_focused = info.row == go.focus.0 && info.col == go.focus.1;
+                let is_previous_focus = go.previous_focus == Some((info.row, info.col));
+                let should_check = match pass {
+                    0 => is_focused,
+                    1 => !is_focused && is_previous_focus,
+                    _ => !is_focused && !is_previous_focus,
+                };
+                if !should_check {
+                    continue;
+                }
 
-            if x <= pos.x && pos.x <= x + w && y <= pos.y && pos.y <= y + h {
-                return Some(id.clone());
+                let x = info.target_pos.x;
+                let y = info.target_pos.y;
+                let w = info.target_size.w.max(10.);
+                let h = info.target_size.h.max(10.);
+
+                if x <= pos.x && pos.x <= x + w && y <= pos.y && pos.y <= y + h {
+                    match item {
+                        GridItem::Column { .. } | GridItem::Tab { .. } => {
+                            if let Some(preview) = self.scrolling.grid_preview(item) {
+                                let rel = (pos - info.target_pos)
+                                    .downscale(info.target_scale.max(0.0001));
+                                for preview_tile in preview.tiles {
+                                    let tile_size = preview_tile.tile.animated_tile_size();
+                                    let tile_rect = Rectangle::new(preview_tile.pos, tile_size);
+                                    if tile_rect.contains(rel) {
+                                        return Some(preview_tile.tile.window().id().clone());
+                                    }
+                                }
+                            }
+                        }
+                        GridItem::Floating { .. } => (),
+                    }
+
+                    return Some(item.window_id().clone());
+                }
             }
         }
         None
@@ -2225,9 +2567,38 @@ impl<W: LayoutElement> Workspace<W> {
     pub fn activate_window_silent(&mut self, window: &W::Id) -> bool {
         if self.floating.has_window(window) {
             self.floating.activate_window(window);
+            self.floating_is_active = FloatingActive::Yes;
             return true;
         }
-        self.scrolling.set_active_window_silent(window)
+
+        if self.scrolling.set_active_window_silent(window) {
+            self.floating_is_active = FloatingActive::No;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn activate_window_from_grid(&mut self, window: &W::Id) -> bool {
+        let previous_window = self
+            .grid_overview
+            .as_ref()
+            .and_then(|go| go.saved_active_window_id.clone());
+        let previous_view_pos = self.grid_overview.as_ref().map(|go| go.saved_view_offset);
+
+        if self.floating.activate_window(window) {
+            self.floating_is_active = FloatingActive::Yes;
+            true
+        } else if self.scrolling.activate_window_from_grid(
+            window,
+            previous_window.as_ref(),
+            previous_view_pos,
+        ) {
+            self.floating_is_active = FloatingActive::No;
+            true
+        } else {
+            false
+        }
     }
 
     pub fn activate_window(&mut self, window: &W::Id) -> bool {

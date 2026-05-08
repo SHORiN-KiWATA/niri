@@ -264,8 +264,8 @@ pub struct GridOverview {
     pub gap: f64,
     pub padding: f64,
     pub backdrop_color: Color,
-    pub max_columns: Option<u32>,
     pub min_scale: f64,
+    pub focused_window_scale: f64,
 }
 
 impl Default for GridOverview {
@@ -274,8 +274,8 @@ impl Default for GridOverview {
             gap: 8.,
             padding: 16.,
             backdrop_color: DEFAULT_BACKDROP_COLOR,
-            max_columns: None,
             min_scale: 0.08,
+            focused_window_scale: 1.04,
         }
     }
 }
@@ -289,9 +289,9 @@ pub struct GridOverviewPart {
     #[knuffel(child)]
     pub backdrop_color: Option<Color>,
     #[knuffel(child, unwrap(argument))]
-    pub max_columns: Option<u32>,
-    #[knuffel(child, unwrap(argument))]
     pub min_scale: Option<FloatOrInt<0, 1>>,
+    #[knuffel(child, unwrap(argument))]
+    pub focused_window_scale: Option<FloatOrInt<1, 2>>,
 }
 
 impl MergeWith<GridOverviewPart> for GridOverview {
@@ -302,12 +302,12 @@ impl MergeWith<GridOverviewPart> for GridOverview {
         if let Some(padding) = part.padding {
             self.padding = padding;
         }
-        if let Some(max_columns) = part.max_columns {
-            self.max_columns = Some(max_columns);
-        }
         merge_clone!((self, part), backdrop_color);
         if let Some(min_scale) = &part.min_scale {
             self.min_scale = min_scale.0;
+        }
+        if let Some(focused_window_scale) = &part.focused_window_scale {
+            self.focused_window_scale = focused_window_scale.0;
         }
     }
 }
