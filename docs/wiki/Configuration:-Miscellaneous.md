@@ -319,6 +319,7 @@ overview {
 
 Settings for the [Grid Overview](./Grid-Overview.md).
 The open/close animation is configured with [`animations.grid-overview-open-close`](./Configuration:-Animations.md#grid-overview-open-close).
+Window shadows are not shown in the grid overview.
 
 #### `gap`
 

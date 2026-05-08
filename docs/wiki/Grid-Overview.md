@@ -19,6 +19,8 @@ Floating windows are included in the grid.
 Tabbed columns show each tab as a separate grid item.
 Non-tabbed columns show as one grid item, and Up/Down switches between windows inside the column.
 
+Window shadows are not shown in the grid overview.
+
 ### Configuration
 
 See the full documentation for the `grid-overview` section [here](./Configuration:-Miscellaneous.md#grid-overview).

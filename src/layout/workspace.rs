@@ -2153,8 +2153,7 @@ impl<W: LayoutElement> Workspace<W> {
                                item_visual_pos: Point<f64, Logical>,
                                item_visual_scale: f64,
                                render_focus_ring: bool,
-                               suppress_decorations: bool,
-                               suppress_shadow: bool| {
+                               suppress_decorations: bool| {
                 let geo = base_xray_pos.pos_in_backdrop.upscale(overview_zoom);
                 let tile_visual_pos = item_visual_pos + tile_rel_pos.upscale(item_visual_scale);
                 let xray_pos = XrayPos::new(
@@ -2162,19 +2161,8 @@ impl<W: LayoutElement> Workspace<W> {
                     item_visual_scale * overview_zoom,
                 );
 
-                let suppress_shadow = suppress_shadow || !render_focus_ring;
                 let mut push_grid_elem = |elem: TileRenderElement<R>| {
-                    if suppress_shadow && matches!(&elem, TileRenderElement::Shadow(_)) {
-                        return;
-                    }
-
-                    if let TileRenderElement::Shadow(mut shadow) = elem {
-                        shadow.damage_all();
-                        push(relocate_grid_elem(
-                            TileRenderElement::Shadow(shadow),
-                            item_visual_pos,
-                            item_visual_scale,
-                        ));
+                    if matches!(elem, TileRenderElement::Shadow(_)) {
                         return;
                     }
 
@@ -2253,9 +2241,7 @@ impl<W: LayoutElement> Workspace<W> {
                 );
 
                 let is_tab = matches!(item, GridItem::Tab { .. });
-                let is_active_tab = is_active_tab_item(item);
                 let suppress_decorations = is_closing && is_tab && !is_focused;
-                let suppress_shadow = suppress_decorations && !is_active_tab;
 
                 match item {
                     GridItem::Column { col_idx, .. } => {
@@ -2263,7 +2249,6 @@ impl<W: LayoutElement> Workspace<W> {
                             return;
                         };
                         let grid_tile_idx = go.get_column_tile_focus(*col_idx);
-                        let suppress_column_shadows = preview.tiles.len() > 1;
                         for is_focused_pass in [true, false] {
                             for preview_tile in &preview.tiles {
                                 let is_grid_focused = preview_tile.tile_idx == grid_tile_idx;
@@ -2281,7 +2266,6 @@ impl<W: LayoutElement> Workspace<W> {
                                     visual_scale,
                                     tile_is_focused,
                                     false,
-                                    suppress_column_shadows,
                                 );
                             }
                         }
@@ -2301,7 +2285,6 @@ impl<W: LayoutElement> Workspace<W> {
                                 visual_scale,
                                 is_focused && preview_tile.tile.window().id() == window_id,
                                 suppress_decorations,
-                                suppress_shadow,
                             );
                         }
 
@@ -2337,7 +2320,6 @@ impl<W: LayoutElement> Workspace<W> {
                             visual_pos,
                             visual_scale,
                             is_focused,
-                            false,
                             false,
                         );
                     }
