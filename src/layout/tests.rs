@@ -3703,15 +3703,17 @@ fn grid_closing_keeps_all_tabbed_items_visible() {
         },
         Op::ConsumeOrExpelWindowLeft { id: None },
         Op::ToggleColumnTabbedDisplay,
+        Op::FocusWindow(1),
         Op::ToggleGridOverview,
     ]);
 
     let scrolling = layout.active_workspace().unwrap().scrolling();
-    let item1 = scrolling.grid_item_for_window(&1).unwrap();
-    let item2 = scrolling.grid_item_for_window(&2).unwrap();
+    let active_item = scrolling.grid_item_for_window(&1).unwrap();
+    let inactive_item = scrolling.grid_item_for_window(&2).unwrap();
 
-    assert!(scrolling.grid_item_visible_when_closing(&item1));
-    assert!(scrolling.grid_item_visible_when_closing(&item2));
+    // All tabs should be visible during closing (active tab will be rendered on top).
+    assert!(scrolling.grid_item_visible_when_closing(&active_item));
+    assert!(scrolling.grid_item_visible_when_closing(&inactive_item));
 }
 
 fn three_column_grid_layout(active: usize) -> Layout<TestWindow> {

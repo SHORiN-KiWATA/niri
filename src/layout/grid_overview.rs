@@ -422,7 +422,11 @@ impl<W: LayoutElement> GridOverview<W> {
     }
 
     fn set_column_tile_focus_raw(&mut self, col_idx: usize, tile_idx: usize) {
-        if let Some(entry) = self.column_tile_focus.iter_mut().find(|(c, _)| *c == col_idx) {
+        if let Some(entry) = self
+            .column_tile_focus
+            .iter_mut()
+            .find(|(c, _)| *c == col_idx)
+        {
             entry.1 = tile_idx;
         } else {
             self.column_tile_focus.push((col_idx, tile_idx));
@@ -433,7 +437,11 @@ impl<W: LayoutElement> GridOverview<W> {
         self.set_column_tile_focus_raw(col_idx, tile_idx);
         // Update the window_id in the layout entry.
         for (item, _) in &mut self.layout.entries {
-            if let GridItem::Column { col_idx: c, window_id: wid } = item {
+            if let GridItem::Column {
+                col_idx: c,
+                window_id: wid,
+            } = item
+            {
                 if *c == col_idx {
                     *wid = window_id.clone();
                 }
@@ -763,27 +771,6 @@ impl<W: LayoutElement> GridLayout<W> {
                     target_scale,
                 },
             ));
-        }
-
-        if !out_entries.is_empty() {
-            let mut max_x = f64::MIN;
-            let mut max_y = f64::MIN;
-            let mut min_x = f64::MAX;
-            let mut min_y = f64::MAX;
-            for (_, info) in &out_entries {
-                min_x = min_x.min(info.target_pos.x);
-                min_y = min_y.min(info.target_pos.y);
-                max_x = max_x.max(info.target_pos.x + info.target_size.w);
-                max_y = max_y.max(info.target_pos.y + info.target_size.h);
-            }
-            let grid_w = max_x - min_x;
-            let grid_h = max_y - min_y;
-            let offset_x = area.loc.x + (content_w + padding * 2. - grid_w) / 2. - min_x;
-            let offset_y = area.loc.y + (content_h + padding * 2. - grid_h) / 2. - min_y;
-            for (_, info) in &mut out_entries {
-                info.target_pos.x += offset_x;
-                info.target_pos.y += offset_y;
-            }
         }
 
         Self {

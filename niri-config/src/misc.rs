@@ -263,7 +263,6 @@ impl MergeWith<OverviewPart> for Overview {
 pub struct GridOverview {
     pub gap: f64,
     pub padding: f64,
-    pub backdrop_color: Color,
     pub min_scale: f64,
     pub focused_window_scale: f64,
 }
@@ -273,7 +272,6 @@ impl Default for GridOverview {
         Self {
             gap: 8.,
             padding: 16.,
-            backdrop_color: DEFAULT_BACKDROP_COLOR,
             min_scale: 0.08,
             focused_window_scale: 1.04,
         }
@@ -283,11 +281,9 @@ impl Default for GridOverview {
 #[derive(knuffel::Decode, Debug, Clone, Copy, PartialEq)]
 pub struct GridOverviewPart {
     #[knuffel(child, unwrap(argument))]
-    pub gap: Option<f64>,
+    pub gap: Option<FloatOrInt<0, { i32::MAX }>>,
     #[knuffel(child, unwrap(argument))]
-    pub padding: Option<f64>,
-    #[knuffel(child)]
-    pub backdrop_color: Option<Color>,
+    pub padding: Option<FloatOrInt<0, { i32::MAX }>>,
     #[knuffel(child, unwrap(argument))]
     pub min_scale: Option<FloatOrInt<0, 1>>,
     #[knuffel(child, unwrap(argument))]
@@ -296,13 +292,12 @@ pub struct GridOverviewPart {
 
 impl MergeWith<GridOverviewPart> for GridOverview {
     fn merge_with(&mut self, part: &GridOverviewPart) {
-        if let Some(gap) = part.gap {
-            self.gap = gap;
+        if let Some(gap) = &part.gap {
+            self.gap = gap.0;
         }
-        if let Some(padding) = part.padding {
-            self.padding = padding;
+        if let Some(padding) = &part.padding {
+            self.padding = padding.0;
         }
-        merge_clone!((self, part), backdrop_color);
         if let Some(min_scale) = &part.min_scale {
             self.min_scale = min_scale.0;
         }

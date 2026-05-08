@@ -313,6 +313,41 @@ overview {
 }
 ```
 
+### `grid-overview`
+
+Settings for the [Grid Overview](./Grid-Overview.md).
+
+#### `gap`
+
+Set the gap between grid cells.
+
+```kdl
+grid-overview {
+    gap 16
+}
+```
+
+#### `padding`
+
+Set the padding around the grid.
+
+```kdl
+grid-overview {
+    padding 32
+}
+```
+
+#### `focused-window-scale`
+
+Scale the focused window relative to its cell.
+Ranges from 1 to 2, where higher values make the focused window larger.
+
+```kdl
+grid-overview {
+    focused-window-scale 1.08
+}
+```
+
 ### `xwayland-satellite`
 
 <sup>Since: 25.08</sup>

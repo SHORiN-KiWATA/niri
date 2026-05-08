@@ -5193,7 +5193,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn grid_click_activated(&mut self) {
         if let Some(ws) = self.active_workspace_mut() {
-            if let Some(active_id) = ws.active_window().map(|w| w.id().clone()) {
+            if let Some(active_id) = ws.grid_focused_window_id() {
                 ws.set_grid_focus_for_window(&active_id);
                 ws.activate_window_from_grid(&active_id);
             }
