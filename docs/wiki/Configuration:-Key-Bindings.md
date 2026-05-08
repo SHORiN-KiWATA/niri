@@ -417,6 +417,16 @@ binds {
 }
 ```
 
+#### `toggle-grid-overview`
+
+Toggle the grid overview on or off. The grid overview shows all windows in a grid layout, allowing you to navigate between them with the arrow keys.
+
+```kdl
+binds {
+    Mod+G { toggle-grid-overview; }
+}
+```
+
 #### `toggle-magnifier`
 
 Toggle the screen magnifier on or off. When toggled on, the screen zooms in centered on the cursor. The zoom factor is configured via [`magnifier.zoom-factor`](./Configuration:-Miscellaneous.md#zoom-factor) (defaults to `2.0`). Toggling off smoothly animates back to normal.

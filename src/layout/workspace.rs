@@ -475,10 +475,7 @@ impl<W: LayoutElement> Workspace<W> {
         });
 
         if let Some((col_idx, new_tile_idx)) = tile_changed {
-            // Sync scrolling layout: activate the new tile in the column.
-            self.scrolling.activate_tile_in_column(col_idx, new_tile_idx);
-
-            // Update grid_overview state.
+            // Update grid_overview state only; do not modify the real scrolling layout.
             if let Some(go) = self.grid_overview.as_mut() {
                 if let Some(col) = self.scrolling.columns().nth(col_idx) {
                     if let Some((tile, _)) = col.tiles().nth(new_tile_idx) {
@@ -2117,6 +2114,10 @@ impl<W: LayoutElement> Workspace<W> {
         let layout = &go.layout;
         let focus = go.focus;
         let is_closing = !go.open;
+        let is_opening = go
+            .progress
+            .as_ref()
+            .is_some_and(|progress| go.open && progress.is_animation());
         let should_render_grid_item =
             |item: &GridItem<W>| !is_closing || self.grid_item_visible_when_closing(item);
 
@@ -2128,7 +2129,8 @@ impl<W: LayoutElement> Workspace<W> {
                                item_visual_pos: Point<f64, Logical>,
                                item_visual_scale: f64,
                                render_focus_ring: bool,
-                               suppress_decorations: bool| {
+                               suppress_decorations: bool,
+                               suppress_shadow: bool| {
                 let geo = base_xray_pos.pos_in_backdrop.upscale(overview_zoom);
                 let tile_visual_pos = item_visual_pos + tile_rel_pos.upscale(item_visual_scale);
                 let xray_pos = XrayPos::new(
@@ -2137,11 +2139,14 @@ impl<W: LayoutElement> Workspace<W> {
                 );
 
                 let mut push_grid_elem = |elem: TileRenderElement<R>| {
+                    if suppress_shadow && matches!(&elem, TileRenderElement::Shadow(_)) {
+                        return;
+                    }
                     if suppress_decorations {
                         match elem {
-                            TileRenderElement::Shadow(_)
-                            | TileRenderElement::FocusRing(_)
-                            | TileRenderElement::Border(_) => return,
+                            TileRenderElement::FocusRing(_) | TileRenderElement::Border(_) => {
+                                return;
+                            }
                             _ => {}
                         }
                     }
@@ -2188,6 +2193,24 @@ impl<W: LayoutElement> Workspace<W> {
                     tab_indicator.render(ctx.renderer, tab_indicator_rel_pos, &mut push_grid_elem);
                 };
 
+            let tab_is_active = |col_idx: usize, window_id: &W::Id| {
+                let active_idx = self.scrolling.column_active_tile_idx(col_idx);
+                self.scrolling
+                    .columns()
+                    .nth(col_idx)
+                    .and_then(|col| col.tiles().nth(active_idx))
+                    .map_or(false, |(tile, _)| tile.window().id() == window_id)
+            };
+            let is_active_tab_item = |item: &GridItem<W>| match item {
+                GridItem::Tab {
+                    col_idx, window_id, ..
+                } => tab_is_active(*col_idx, window_id),
+                _ => false,
+            };
+            let is_inactive_tab_item = |item: &GridItem<W>| {
+                matches!(item, GridItem::Tab { .. }) && !is_active_tab_item(item)
+            };
+
             let mut render_grid_item = |ctx: &mut RenderCtx<R>,
                                         item: &GridItem<W>,
                                         info: &GridEntryInfo,
@@ -2200,7 +2223,9 @@ impl<W: LayoutElement> Workspace<W> {
                 );
 
                 let is_tab = matches!(item, GridItem::Tab { .. });
+                let is_active_tab = is_active_tab_item(item);
                 let suppress_decorations = is_closing && is_tab && !is_focused;
+                let suppress_shadow = suppress_decorations && !is_active_tab;
 
                 match item {
                     GridItem::Column { col_idx, .. } => {
@@ -2219,6 +2244,7 @@ impl<W: LayoutElement> Workspace<W> {
                                 visual_scale,
                                 is_focused && is_grid_focused,
                                 false,
+                                false,
                             );
                         }
                     }
@@ -2226,6 +2252,7 @@ impl<W: LayoutElement> Workspace<W> {
                         let Some(preview) = self.scrolling.grid_preview(item) else {
                             return;
                         };
+
                         for preview_tile in preview.tiles {
                             render_tile(
                                 ctx,
@@ -2236,6 +2263,7 @@ impl<W: LayoutElement> Workspace<W> {
                                 visual_scale,
                                 is_focused && preview_tile.tile.window().id() == window_id,
                                 suppress_decorations,
+                                suppress_shadow,
                             );
                         }
 
@@ -2272,6 +2300,7 @@ impl<W: LayoutElement> Workspace<W> {
                             visual_scale,
                             is_focused,
                             false,
+                            false,
                         );
                     }
                 }
@@ -2279,16 +2308,44 @@ impl<W: LayoutElement> Workspace<W> {
 
             for (item, info) in &layout.entries {
                 let is_focused = info.row == focus.0 && info.col == focus.1;
-                if is_focused && should_render_grid_item(item) {
+                if is_focused
+                    && should_render_grid_item(item)
+                    && !(is_closing && is_inactive_tab_item(item))
+                {
                     render_grid_item(&mut ctx, item, info, true);
+                }
+            }
+
+            // Render elements are queued top-to-bottom. Keep the real active tab above its inactive
+            // tabs while they split out of or merge back into the tabbed column.
+            if is_opening || is_closing {
+                for (item, info) in &layout.entries {
+                    let is_focused = info.row == focus.0 && info.col == focus.1;
+                    if !is_focused && should_render_grid_item(item) && is_active_tab_item(item) {
+                        render_grid_item(&mut ctx, item, info, false);
+                    }
+                }
+            }
+
+            if is_closing {
+                for (item, info) in &layout.entries {
+                    let is_focused = info.row == focus.0 && info.col == focus.1;
+                    if is_focused && should_render_grid_item(item) && is_inactive_tab_item(item) {
+                        render_grid_item(&mut ctx, item, info, false);
+                    }
                 }
             }
 
             for (item, info) in &layout.entries {
                 let is_focused = info.row == focus.0 && info.col == focus.1;
-                if !is_focused && should_render_grid_item(item) {
-                    render_grid_item(&mut ctx, item, info, false);
+                if is_focused || !should_render_grid_item(item) {
+                    continue;
                 }
+                if (is_opening || is_closing) && is_active_tab_item(item) {
+                    continue;
+                }
+
+                render_grid_item(&mut ctx, item, info, false);
             }
         }
 

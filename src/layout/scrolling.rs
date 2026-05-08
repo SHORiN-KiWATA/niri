@@ -2650,11 +2650,17 @@ impl<W: LayoutElement> ScrollingSpace<W> {
     }
 
     pub fn column_tile_count(&self, col_idx: usize) -> usize {
-        self.columns.get(col_idx).map(|c| c.tiles.len()).unwrap_or(0)
+        self.columns
+            .get(col_idx)
+            .map(|c| c.tiles.len())
+            .unwrap_or(0)
     }
 
     pub fn column_active_tile_idx(&self, col_idx: usize) -> usize {
-        self.columns.get(col_idx).map(|c| c.active_tile_idx).unwrap_or(0)
+        self.columns
+            .get(col_idx)
+            .map(|c| c.active_tile_idx)
+            .unwrap_or(0)
     }
 
     fn columns_mut(&mut self) -> impl Iterator<Item = (&mut Column<W>, f64)> + '_ {
