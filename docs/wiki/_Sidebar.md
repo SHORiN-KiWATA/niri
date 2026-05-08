@@ -6,6 +6,7 @@
 * [Floating Windows](./Floating-Windows.md)
 * [Tabs](./Tabs.md)
 * [Overview](./Overview.md)
+* [Grid Overview](./Grid-Overview.md)
 * [Screencasting](./Screencasting.md)
 * [Layer‐Shell Components](./Layer%E2%80%90Shell-Components.md)
 * [IPC, `niri msg`](./IPC.md)

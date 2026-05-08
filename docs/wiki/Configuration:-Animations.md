@@ -63,6 +63,11 @@ animations {
         spring damping-ratio=1.0 stiffness=800 epsilon=0.0001
     }
 
+    grid-overview-open-close {
+        duration-ms 250
+        curve "ease-out-cubic"
+    }
+
     magnifier {
         spring damping-ratio=1.0 stiffness=800 epsilon=0.0001
     }
@@ -444,6 +449,22 @@ The open/close zoom animation of the [Overview](./Overview.md).
 animations {
     overview-open-close {
         spring damping-ratio=1.0 stiffness=800 epsilon=0.0001
+    }
+}
+```
+
+#### `grid-overview-open-close`
+
+<sup>Since: 26.05</sup>
+
+The open/close animation of the [Grid Overview](./Grid-Overview.md).
+This also drives grid rearrange and selection scale changes.
+
+```kdl
+animations {
+    grid-overview-open-close {
+        duration-ms 250
+        curve "ease-out-cubic"
     }
 }
 ```

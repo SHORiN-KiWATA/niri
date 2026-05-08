@@ -585,23 +585,43 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                     return;
                 };
 
-                for tile in &mut col.tiles {
+                let normal_pos = col
+                    .tiles()
+                    .map(|(tile, tile_off)| tile_off + tile.render_offset())
+                    .reduce(|a, b| Point::from((a.x.min(b.x), a.y.min(b.y))))
+                    .unwrap_or_default();
+
+                for (tile, tile_off) in col.tiles_mut() {
                     let is_active = focused_window == Some(tile.window().id());
-                    tile.update_render_elements(is_active, view_rect);
+                    let tile_pos = tile_off + tile.render_offset() - normal_pos;
+                    let mut tile_view_rect = view_rect;
+                    tile_view_rect.loc -= tile_pos;
+                    tile.update_render_elements(is_active, tile_view_rect);
                 }
             }
-            GridItem::Tab { window_id, .. } => {
-                let Some(tile) = self
-                    .columns
-                    .iter_mut()
-                    .flat_map(|col| col.tiles.iter_mut())
-                    .find(|tile| tile.window().id() == window_id)
-                else {
+            GridItem::Tab {
+                col_idx,
+                tile_idx,
+                window_id,
+            } => {
+                let Some(col) = self.columns.get_mut(*col_idx) else {
                     return;
                 };
 
+                let Some((tile, tile_off)) = col.tiles_mut().nth(*tile_idx) else {
+                    return;
+                };
+
+                if tile.window().id() != window_id {
+                    return;
+                }
+
+                let tile_pos = tile_off + tile.render_offset();
+                let mut tile_view_rect = view_rect;
+                tile_view_rect.loc -= tile_pos;
+
                 let is_active = focused_window == Some(tile.window().id());
-                tile.update_render_elements(is_active, view_rect);
+                tile.update_render_elements(is_active, tile_view_rect);
             }
             GridItem::Floating { .. } => (),
         }
@@ -2654,6 +2674,12 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             .get(col_idx)
             .map(|c| c.tiles.len())
             .unwrap_or(0)
+    }
+
+    pub fn column_tile_position(&self, col_idx: usize, window: &W::Id) -> Option<usize> {
+        self.columns
+            .get(col_idx)
+            .and_then(|col| col.position(window))
     }
 
     pub fn column_active_tile_idx(&self, col_idx: usize) -> usize {

@@ -470,9 +470,10 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn grid_navigate(&mut self, dir: GridDirection) {
-        let tile_changed = self.grid_overview.as_mut().and_then(|go| {
-            go.navigate(dir, |col_idx| self.scrolling.column_tile_count(col_idx))
-        });
+        let tile_changed = self
+            .grid_overview
+            .as_mut()
+            .and_then(|go| go.navigate(dir, |col_idx| self.scrolling.column_tile_count(col_idx)));
 
         if let Some((col_idx, new_tile_idx)) = tile_changed {
             // Update grid_overview state only; do not modify the real scrolling layout.
@@ -580,9 +581,8 @@ impl<W: LayoutElement> Workspace<W> {
                 }
             })
             .collect();
-        go.column_tile_focus.retain(|(col_idx, _)| {
-            valid_col_indices.contains(col_idx)
-        });
+        go.column_tile_focus
+            .retain(|(col_idx, _)| valid_col_indices.contains(col_idx));
         for col_idx in valid_col_indices {
             let tile_count = self.scrolling.column_tile_count(col_idx);
             if let Some(entry) = go.column_tile_focus.iter_mut().find(|(c, _)| *c == col_idx) {
@@ -708,6 +708,13 @@ impl<W: LayoutElement> Workspace<W> {
 
         go.set_focus((row, col));
         go.set_focused_window_id(id.clone());
+
+        if let GridItem::Column { col_idx, .. } = &item {
+            if let Some(tile_idx) = self.scrolling.column_tile_position(*col_idx, id) {
+                go.set_column_tile_focus(*col_idx, tile_idx, id.clone());
+            }
+        }
+
         true
     }
 
@@ -1034,8 +1041,14 @@ impl<W: LayoutElement> Workspace<W> {
                         }
                     });
 
-                    self.scrolling
-                        .add_tile(grid_col_idx.map(|c| c + 1), tile, activate, width, is_full_width, None);
+                    self.scrolling.add_tile(
+                        grid_col_idx.map(|c| c + 1),
+                        tile,
+                        activate,
+                        width,
+                        is_full_width,
+                        None,
+                    );
 
                     if activate {
                         self.floating_is_active = FloatingActive::No;
@@ -2122,6 +2135,17 @@ impl<W: LayoutElement> Workspace<W> {
             |item: &GridItem<W>| !is_closing || self.grid_item_visible_when_closing(item);
 
         {
+            let relocate_grid_elem = |elem: TileRenderElement<R>,
+                                      item_visual_pos: Point<f64, Logical>,
+                                      item_visual_scale: f64| {
+                let elem: ScrollingSpaceRenderElement<R> = elem.into();
+                let origin = Point::<i32, smithay::utils::Physical>::from((0, 0));
+                let elem = RescaleRenderElement::from_element(elem, origin, item_visual_scale);
+                let phys_pos = item_visual_pos.to_physical_precise_round(scale);
+                let elem = RelocateRenderElement::from_element(elem, phys_pos, Relocate::Relative);
+                WorkspaceRenderElement::from(elem)
+            };
+
             let render_tile = |ctx: &mut RenderCtx<R>,
                                push: &mut dyn FnMut(WorkspaceRenderElement<R>),
                                tile: &Tile<W>,
@@ -2138,10 +2162,22 @@ impl<W: LayoutElement> Workspace<W> {
                     item_visual_scale * overview_zoom,
                 );
 
+                let suppress_shadow = suppress_shadow || !render_focus_ring;
                 let mut push_grid_elem = |elem: TileRenderElement<R>| {
                     if suppress_shadow && matches!(&elem, TileRenderElement::Shadow(_)) {
                         return;
                     }
+
+                    if let TileRenderElement::Shadow(mut shadow) = elem {
+                        shadow.damage_all();
+                        push(relocate_grid_elem(
+                            TileRenderElement::Shadow(shadow),
+                            item_visual_pos,
+                            item_visual_scale,
+                        ));
+                        return;
+                    }
+
                     if suppress_decorations {
                         match elem {
                             TileRenderElement::FocusRing(_) | TileRenderElement::Border(_) => {
@@ -2150,13 +2186,7 @@ impl<W: LayoutElement> Workspace<W> {
                             _ => {}
                         }
                     }
-                    let elem: ScrollingSpaceRenderElement<R> = elem.into();
-                    let origin = Point::<i32, smithay::utils::Physical>::from((0, 0));
-                    let elem = RescaleRenderElement::from_element(elem, origin, item_visual_scale);
-                    let phys_pos = item_visual_pos.to_physical_precise_round(scale);
-                    let elem =
-                        RelocateRenderElement::from_element(elem, phys_pos, Relocate::Relative);
-                    push(elem.into());
+                    push(relocate_grid_elem(elem, item_visual_pos, item_visual_scale));
                 };
 
                 tile.render(
@@ -2233,19 +2263,27 @@ impl<W: LayoutElement> Workspace<W> {
                             return;
                         };
                         let grid_tile_idx = go.get_column_tile_focus(*col_idx);
-                        for preview_tile in preview.tiles {
-                            let is_grid_focused = preview_tile.tile_idx == grid_tile_idx;
-                            render_tile(
-                                ctx,
-                                push,
-                                preview_tile.tile,
-                                preview_tile.pos,
-                                visual_pos,
-                                visual_scale,
-                                is_focused && is_grid_focused,
-                                false,
-                                false,
-                            );
+                        let suppress_column_shadows = preview.tiles.len() > 1;
+                        for is_focused_pass in [true, false] {
+                            for preview_tile in &preview.tiles {
+                                let is_grid_focused = preview_tile.tile_idx == grid_tile_idx;
+                                if is_grid_focused != is_focused_pass {
+                                    continue;
+                                }
+                                let tile_is_focused = is_focused && is_grid_focused;
+
+                                render_tile(
+                                    ctx,
+                                    push,
+                                    preview_tile.tile,
+                                    preview_tile.pos,
+                                    visual_pos,
+                                    visual_scale,
+                                    tile_is_focused,
+                                    false,
+                                    suppress_column_shadows,
+                                );
+                            }
                         }
                     }
                     GridItem::Tab { window_id, .. } => {
@@ -2306,8 +2344,20 @@ impl<W: LayoutElement> Workspace<W> {
                 }
             };
 
+            let is_floating_item = |item: &GridItem<W>| matches!(item, GridItem::Floating { .. });
+
             for (item, info) in &layout.entries {
                 let is_focused = info.row == focus.0 && info.col == focus.1;
+                if should_render_grid_item(item) && is_floating_item(item) {
+                    render_grid_item(&mut ctx, item, info, is_focused);
+                }
+            }
+
+            for (item, info) in &layout.entries {
+                let is_focused = info.row == focus.0 && info.col == focus.1;
+                if is_floating_item(item) {
+                    continue;
+                }
                 if is_focused
                     && should_render_grid_item(item)
                     && !(is_closing && is_inactive_tab_item(item))
@@ -2339,6 +2389,9 @@ impl<W: LayoutElement> Workspace<W> {
             for (item, info) in &layout.entries {
                 let is_focused = info.row == focus.0 && info.col == focus.1;
                 if is_focused || !should_render_grid_item(item) {
+                    continue;
+                }
+                if is_floating_item(item) {
                     continue;
                 }
                 if (is_opening || is_closing) && is_active_tab_item(item) {

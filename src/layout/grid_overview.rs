@@ -186,7 +186,7 @@ impl<W: LayoutElement> GridOverview<W> {
                 0.,
                 1.,
                 0.,
-                self.options.animations.window_movement.0,
+                self.options.animations.grid_overview_open_close.0,
             ));
         }
         self.layout = GridLayout::compute(items, area, &self.options.grid_overview);
@@ -289,14 +289,18 @@ impl<W: LayoutElement> GridOverview<W> {
             return (pos, scale);
         }
 
-        let anim_p = self.rearrange_anim.as_ref().map_or(p, |anim| anim.value());
+        let anim_p = self
+            .rearrange_anim
+            .as_ref()
+            .map_or(p, |anim| anim.value())
+            .clamp(0., 1.);
         let is_rearranging = self.rearrange_anim.is_some();
 
         let normal_pos = Self::matching_value(&self.entry_positions, item)
             .copied()
             .unwrap_or(fallback_pos);
 
-        let lerp_pos = Point::from((
+        let lerp_pos: Point<f64, Logical> = Point::from((
             normal_pos.x + (info.target_pos.x - normal_pos.x) * anim_p,
             normal_pos.y + (info.target_pos.y - normal_pos.y) * anim_p,
         ));
@@ -318,11 +322,13 @@ impl<W: LayoutElement> GridOverview<W> {
         let item_focus_boost = self.entry_focus_boost(item, info);
         let base_size = item_source_size.upscale(final_scale);
         let visual_size = base_size.upscale(item_focus_boost);
-        let grow = Point::from((
+        let grow: Point<f64, Logical> = Point::from((
             (visual_size.w - base_size.w) / 2.,
             (visual_size.h - base_size.h) / 2.,
         ));
-        let visual_pos = lerp_pos - grow;
+        // Keep the top edge anchored while focus boost animates; otherwise thumbnails drift
+        // vertically when losing focus and look like they jitter.
+        let visual_pos = Point::from((lerp_pos.x - grow.x, lerp_pos.y));
 
         (visual_pos, final_scale * item_focus_boost)
     }
@@ -367,7 +373,7 @@ impl<W: LayoutElement> GridOverview<W> {
                 0.,
                 1.,
                 0.,
-                self.options.animations.window_resize.anim,
+                self.options.animations.grid_overview_open_close.0,
             ));
         }
 
@@ -391,25 +397,11 @@ impl<W: LayoutElement> GridOverview<W> {
     }
 
     fn snapshot_focus_boosts(&mut self) {
-        let configured_focus_boost = self
-            .options
-            .grid_overview
-            .focused_window_scale
-            .clamp(1., 2.);
-        let base_boost = 1. + (configured_focus_boost - 1.) * self.progress_value().clamp(0., 1.);
-
         self.focus_boosts = self
             .layout
             .entries
             .iter()
-            .map(|(item, info)| {
-                let steady = if self.focus == (info.row, info.col) {
-                    base_boost
-                } else {
-                    1.
-                };
-                (item.clone(), steady)
-            })
+            .map(|(item, info)| (item.clone(), self.entry_focus_boost(item, info)))
             .collect();
     }
 
@@ -483,7 +475,7 @@ impl<W: LayoutElement> GridOverview<W> {
                             0.,
                             1.,
                             0.,
-                            self.options.animations.window_resize.anim,
+                            self.options.animations.grid_overview_open_close.0,
                         ));
                         return Some((col_idx, new_tile_idx));
                     }
@@ -500,7 +492,7 @@ impl<W: LayoutElement> GridOverview<W> {
                             0.,
                             1.,
                             0.,
-                            self.options.animations.window_resize.anim,
+                            self.options.animations.grid_overview_open_close.0,
                         ));
                         return Some((col_idx, new_tile_idx));
                     }
@@ -659,12 +651,14 @@ impl<W: LayoutElement> GridOverview<W> {
             .iter()
             .map(|(item, info)| (item.clone(), info.target_scale))
             .collect();
-        self.focus_boosts = self
-            .layout
-            .entries
-            .iter()
-            .map(|(item, _)| (item.clone(), 1.))
-            .collect();
+        if self.focus_boost_anim.is_none() {
+            self.focus_boosts = self
+                .layout
+                .entries
+                .iter()
+                .map(|(item, _)| (item.clone(), 1.))
+                .collect();
+        }
     }
 
     pub fn are_animations_ongoing(&self) -> bool {

@@ -1639,6 +1639,17 @@ mod tests {
                         ),
                     },
                 ),
+                grid_overview_open_close: GridOverviewOpenCloseAnim(
+                    Animation {
+                        off: false,
+                        kind: Easing(
+                            EasingParams {
+                                duration_ms: 250,
+                                curve: EaseOutCubic,
+                            },
+                        ),
+                    },
+                ),
                 magnifier: MagnifierAnim(
                     Animation {
                         off: false,
@@ -1729,6 +1740,12 @@ mod tests {
                         a: 0.3137255,
                     },
                 },
+            },
+            grid_overview: GridOverview {
+                gap: 8.0,
+                padding: 16.0,
+                min_scale: 0.08,
+                focused_window_scale: 1.04,
             },
             magnifier: Magnifier {
                 off: false,

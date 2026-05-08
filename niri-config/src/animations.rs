@@ -332,10 +332,9 @@ impl Default for GridOverviewOpenCloseAnim {
     fn default() -> Self {
         Self(Animation {
             off: false,
-            kind: Kind::Spring(SpringParams {
-                damping_ratio: 1.,
-                stiffness: 800,
-                epsilon: 0.0001,
+            kind: Kind::Easing(EasingParams {
+                duration_ms: 250,
+                curve: Curve::EaseOutCubic,
             }),
         })
     }

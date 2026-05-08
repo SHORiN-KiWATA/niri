@@ -315,11 +315,15 @@ overview {
 
 ### `grid-overview`
 
+<sup>Since: 26.05</sup>
+
 Settings for the [Grid Overview](./Grid-Overview.md).
+The open/close animation is configured with [`animations.grid-overview-open-close`](./Configuration:-Animations.md#grid-overview-open-close).
 
 #### `gap`
 
 Set the gap between grid cells.
+The default is `8`.
 
 ```kdl
 grid-overview {
@@ -330,6 +334,7 @@ grid-overview {
 #### `padding`
 
 Set the padding around the grid.
+The default is `16`.
 
 ```kdl
 grid-overview {
@@ -337,10 +342,23 @@ grid-overview {
 }
 ```
 
+#### `min-scale`
+
+Set the minimum size of the shorter preview dimension relative to its grid cell.
+This helps very wide or very tall windows stay visible in the grid.
+The default is `0.08`.
+
+```kdl
+grid-overview {
+    min-scale 0.08
+}
+```
+
 #### `focused-window-scale`
 
 Scale the focused window relative to its cell.
 Ranges from 1 to 2, where higher values make the focused window larger.
+The default is `1.04`.
 
 ```kdl
 grid-overview {

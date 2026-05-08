@@ -417,13 +417,20 @@ binds {
 }
 ```
 
-#### `toggle-grid-overview`
+#### `toggle-grid-overview`, `open-grid-overview`, `close-grid-overview`
 
-Toggle the grid overview on or off. The grid overview shows all windows in a grid layout, allowing you to navigate between them with the arrow keys.
+Control the [Grid Overview](./Grid-Overview.md).
+The grid overview shows windows in a grid layout, allowing you to navigate between them with your normal focus key binds.
+
+- `toggle-grid-overview`: toggle the grid overview on or off.
+- `open-grid-overview`: open the grid overview.
+- `close-grid-overview`: close the grid overview.
 
 ```kdl
 binds {
     Mod+G { toggle-grid-overview; }
+    Mod+Shift+G { open-grid-overview; }
+    Mod+Ctrl+G { close-grid-overview; }
 }
 ```
 
