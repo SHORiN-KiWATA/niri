@@ -3714,8 +3714,6 @@ fn grid_closing_keeps_all_tabbed_items_visible() {
     // All tabs should be visible during closing (active tab will be rendered on top).
     assert!(scrolling.grid_item_visible_when_closing(&active_item));
     assert!(scrolling.grid_item_visible_when_closing(&inactive_item));
-<<<<<<< HEAD
-=======
 }
 
 #[test]
@@ -3774,7 +3772,6 @@ fn grid_closing_nonfocused_column_preserves_grid_focus() {
 
     assert!(layout.is_grid_overview_open());
     assert_eq!(layout.grid_focused_window_id(), Some(3));
->>>>>>> before-review
 }
 
 fn three_column_grid_layout(active: usize) -> Layout<TestWindow> {

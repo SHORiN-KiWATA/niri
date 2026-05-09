@@ -2314,15 +2314,6 @@ impl<W: LayoutElement> Workspace<W> {
                 }
             };
 
-<<<<<<< HEAD
-            for (item, info) in &layout.entries {
-                let is_focused = info.row == focus.0 && info.col == focus.1;
-                if is_focused
-                    && should_render_grid_item(item)
-                    && !(is_closing && is_inactive_tab_item(item))
-                {
-                    render_grid_item(&mut ctx, item, info, true);
-=======
             // Render elements are queued top-to-bottom. Keep floating grid items above tiling grid
             // items while preserving the existing within-layer focus and tab ordering.
             for render_floating_layer in [true, false] {
@@ -2339,7 +2330,6 @@ impl<W: LayoutElement> Workspace<W> {
                     {
                         render_grid_item(&mut ctx, item, info, true);
                     }
->>>>>>> before-review
                 }
 
                 // Keep the real active tab above its inactive tabs while they split out of or
@@ -2379,40 +2369,8 @@ impl<W: LayoutElement> Workspace<W> {
                         continue;
                     }
 
-<<<<<<< HEAD
-            // Render elements are queued top-to-bottom. Keep the real active tab above its inactive
-            // tabs while they split out of or merge back into the tabbed column.
-            if is_opening || is_closing {
-                for (item, info) in &layout.entries {
-                    let is_focused = info.row == focus.0 && info.col == focus.1;
-                    if !is_focused && should_render_grid_item(item) && is_active_tab_item(item) {
-                        render_grid_item(&mut ctx, item, info, false);
-                    }
-                }
-            }
-
-            if is_closing {
-                for (item, info) in &layout.entries {
-                    let is_focused = info.row == focus.0 && info.col == focus.1;
-                    if is_focused && should_render_grid_item(item) && is_inactive_tab_item(item) {
-                        render_grid_item(&mut ctx, item, info, false);
-                    }
-                }
-            }
-
-            for (item, info) in &layout.entries {
-                let is_focused = info.row == focus.0 && info.col == focus.1;
-                if is_focused || !should_render_grid_item(item) {
-                    continue;
-=======
                     render_grid_item(&mut ctx, item, info, false);
->>>>>>> before-review
                 }
-                if (is_opening || is_closing) && is_active_tab_item(item) {
-                    continue;
-                }
-
-                render_grid_item(&mut ctx, item, info, false);
             }
         }
 
