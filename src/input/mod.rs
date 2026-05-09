@@ -3110,8 +3110,12 @@ impl State {
                 && button == Some(MouseButton::Left)
                 && !pointer.is_grabbed()
             {
-                self.niri.layout.close_grid_overview();
-                self.niri.queue_redraw_all();
+                let location = pointer.current_location();
+                let over_layer_shell = self.niri.contents_under(location).layer.is_some();
+                if !over_layer_shell {
+                    self.niri.layout.close_grid_overview();
+                    self.niri.queue_redraw_all();
+                }
             } else if let Some((output, ws)) = is_overview_open
                 .then(|| self.niri.workspace_under_cursor(false))
                 .flatten()
