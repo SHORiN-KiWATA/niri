@@ -264,7 +264,7 @@ pub struct GridOverview {
     pub gap: f64,
     pub padding: f64,
     pub min_scale: f64,
-    pub focused_window_scale: f64,
+    pub focused_column_scale: f64,
 }
 
 impl Default for GridOverview {
@@ -273,7 +273,7 @@ impl Default for GridOverview {
             gap: 16.,
             padding: 100.,
             min_scale: 0.08,
-            focused_window_scale: 1.04,
+            focused_column_scale: 1.04,
         }
     }
 }
@@ -287,7 +287,7 @@ pub struct GridOverviewPart {
     #[knuffel(child, unwrap(argument))]
     pub min_scale: Option<FloatOrInt<0, 1>>,
     #[knuffel(child, unwrap(argument))]
-    pub focused_window_scale: Option<FloatOrInt<1, 2>>,
+    pub focused_column_scale: Option<FloatOrInt<1, 2>>,
 }
 
 impl MergeWith<GridOverviewPart> for GridOverview {
@@ -301,8 +301,8 @@ impl MergeWith<GridOverviewPart> for GridOverview {
         if let Some(min_scale) = &part.min_scale {
             self.min_scale = min_scale.0;
         }
-        if let Some(focused_window_scale) = &part.focused_window_scale {
-            self.focused_window_scale = focused_window_scale.0;
+        if let Some(focused_column_scale) = &part.focused_column_scale {
+            self.focused_column_scale = focused_column_scale.0;
         }
     }
 }

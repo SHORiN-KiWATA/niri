@@ -337,14 +337,14 @@ grid-overview {
 }
 ```
 
-#### `focused-window-scale`
+#### `focused-column-scale`
 
-Scale the focused window relative to its cell.
-Ranges from 1 to 2, where higher values make the focused window larger.
+Scale the focused column relative to its cell.
+Ranges from 1 to 2, where higher values make the focused column larger.
 
 ```kdl
 grid-overview {
-    focused-window-scale 1.08
+    focused-column-scale 1.08
 }
 ```
 

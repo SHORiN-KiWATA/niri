@@ -331,7 +331,7 @@ impl<W: LayoutElement> GridOverview<W> {
         let configured_focus_boost = self
             .options
             .grid_overview
-            .focused_window_scale
+            .focused_column_scale
             .clamp(1., 2.);
         let base_boost = 1. + (configured_focus_boost - 1.) * self.progress_value().clamp(0., 1.);
         let target_focus_boost = if self.focus == (info.row, info.col) {
@@ -394,7 +394,7 @@ impl<W: LayoutElement> GridOverview<W> {
         let configured_focus_boost = self
             .options
             .grid_overview
-            .focused_window_scale
+            .focused_column_scale
             .clamp(1., 2.);
         let base_boost = 1. + (configured_focus_boost - 1.) * self.progress_value().clamp(0., 1.);
 

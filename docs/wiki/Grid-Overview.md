@@ -23,10 +23,10 @@ grid-overview {
 }
 ```
 
-To change the focused window scale, use the `focused-window-scale` setting:
+To change the focused column scale, use the `focused-column-scale` setting:
 
 ```kdl
 grid-overview {
-    focused-window-scale 1.08
+    focused-column-scale 1.08
 }
 ```
