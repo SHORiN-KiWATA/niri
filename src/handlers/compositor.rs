@@ -175,9 +175,6 @@ impl CompositorHandler for State {
                             }
                         }
                     });
-                    if activate == ActivateWindow::Yes {
-                        self.niri.layout.dismiss_grid_overview();
-                    }
 
                     let parent = toplevel
                         .parent()

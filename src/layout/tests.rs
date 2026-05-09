@@ -3997,6 +3997,31 @@ fn grid_confirming_column_tile_updates_grid_tile_focus_before_close_finishes() {
 }
 
 #[test]
+fn grid_stays_open_when_window_is_added() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::ToggleGridOverview,
+    ]);
+
+    check_ops_on_layout(
+        &mut layout,
+        [Op::AddWindow {
+            params: TestWindowParams::new(2),
+        }],
+    );
+
+    assert!(layout.is_grid_overview_open());
+    let go = layout
+        .active_workspace()
+        .and_then(|ws| ws.grid_overview())
+        .unwrap();
+    assert!(go.layout.entries.iter().any(|(item, _)| item.window_id() == &2));
+}
+
+#[test]
 fn grid_implicit_window_width_targets_grid_focus() {
     let mut layout = two_column_grid_focused_on_second();
 
