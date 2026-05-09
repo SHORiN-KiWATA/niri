@@ -539,7 +539,15 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn on_window_closed_in_grid(&mut self) {
+        let previous_focus = self.grid_focused_window_id();
         self.recompute_grid_overview_layout();
+
+        if let Some(id) = previous_focus {
+            if self.set_grid_focus_for_window(&id) {
+                return;
+            }
+        }
+
         self.sync_grid_focus_to_active_window();
     }
 
@@ -2306,62 +2314,79 @@ impl<W: LayoutElement> Workspace<W> {
                 }
             };
 
-            for (item, info) in &layout.entries {
-                let is_focused = info.row == focus.0 && info.col == focus.1;
-                if is_focused
-                    && should_render_grid_item(item)
-                    && !(is_closing && is_inactive_tab_item(item))
-                {
-                    render_grid_item(&mut ctx, item, info, true);
-                }
-            }
+            // Render elements are queued top-to-bottom. Keep floating grid items above tiling grid
+            // items while preserving the existing within-layer focus and tab ordering.
+            for render_floating_layer in [true, false] {
+                let is_item_in_layer = |item: &GridItem<W>| {
+                    matches!(item, GridItem::Floating { .. }) == render_floating_layer
+                };
 
-            // Render elements are queued top-to-bottom. Keep the real active tab above its inactive
-            // tabs while they split out of or merge back into the tabbed column.
-            if is_opening || is_closing {
                 for (item, info) in &layout.entries {
                     let is_focused = info.row == focus.0 && info.col == focus.1;
-                    if !is_focused && should_render_grid_item(item) && is_active_tab_item(item) {
-                        render_grid_item(&mut ctx, item, info, false);
+                    if is_focused
+                        && should_render_grid_item(item)
+                        && is_item_in_layer(item)
+                        && !(is_closing && is_inactive_tab_item(item))
+                    {
+                        render_grid_item(&mut ctx, item, info, true);
                     }
                 }
-            }
 
-            if is_closing {
+                // Keep the real active tab above its inactive tabs while they split out of or
+                // merge back into the tabbed column.
+                if is_opening || is_closing {
+                    for (item, info) in &layout.entries {
+                        let is_focused = info.row == focus.0 && info.col == focus.1;
+                        if !is_focused
+                            && should_render_grid_item(item)
+                            && is_item_in_layer(item)
+                            && is_active_tab_item(item)
+                        {
+                            render_grid_item(&mut ctx, item, info, false);
+                        }
+                    }
+                }
+
+                if is_closing {
+                    for (item, info) in &layout.entries {
+                        let is_focused = info.row == focus.0 && info.col == focus.1;
+                        if is_focused
+                            && should_render_grid_item(item)
+                            && is_item_in_layer(item)
+                            && is_inactive_tab_item(item)
+                        {
+                            render_grid_item(&mut ctx, item, info, false);
+                        }
+                    }
+                }
+
                 for (item, info) in &layout.entries {
                     let is_focused = info.row == focus.0 && info.col == focus.1;
-                    if is_focused && should_render_grid_item(item) && is_inactive_tab_item(item) {
-                        render_grid_item(&mut ctx, item, info, false);
+                    if is_focused || !should_render_grid_item(item) || !is_item_in_layer(item) {
+                        continue;
                     }
-                }
-            }
+                    if (is_opening || is_closing) && is_active_tab_item(item) {
+                        continue;
+                    }
 
-            for (item, info) in &layout.entries {
-                let is_focused = info.row == focus.0 && info.col == focus.1;
-                if is_focused || !should_render_grid_item(item) {
-                    continue;
+                    render_grid_item(&mut ctx, item, info, false);
                 }
-                if (is_opening || is_closing) && is_active_tab_item(item) {
-                    continue;
-                }
-
-                render_grid_item(&mut ctx, item, info, false);
             }
         }
 
-        // Render closing windows behind live grid tiles.
+        // Render closing windows behind live grid tiles, preserving floating-above-tiling order.
         let view_rect = Rectangle::new(Point::from((0., 0.)), self.view_size);
-        for closing in self.scrolling.closing_windows() {
-            let elem = closing.render(ctx.as_gles(), view_rect, Scale::from(scale));
-            let elem: ScrollingSpaceRenderElement<R> = elem.into();
-            push(elem.into());
-        }
         if self.is_floating_visible() {
             for closing in self.floating.closing_windows() {
                 let elem = closing.render(ctx.as_gles(), view_rect, Scale::from(scale));
                 let elem: FloatingSpaceRenderElement<R> = elem.into();
                 push(elem.into());
             }
+        }
+        for closing in self.scrolling.closing_windows() {
+            let elem = closing.render(ctx.as_gles(), view_rect, Scale::from(scale));
+            let elem: ScrollingSpaceRenderElement<R> = elem.into();
+            push(elem.into());
         }
     }
 
