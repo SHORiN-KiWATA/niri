@@ -3774,6 +3774,24 @@ fn grid_closing_nonfocused_column_preserves_grid_focus() {
     assert_eq!(layout.grid_focused_window_id(), Some(3));
 }
 
+#[test]
+fn grid_dismisses_without_confirming_on_workspace_switch() {
+    let mut layout = three_column_grid_layout(1);
+    check_ops_on_layout(&mut layout, [Op::ToggleGridOverview]);
+    layout.focus_right();
+    layout.verify_invariants();
+    assert_eq!(layout.grid_focused_window_id(), Some(2));
+
+    check_ops_on_layout(&mut layout, [Op::FocusWorkspaceDown]);
+
+    assert!(!layout.is_grid_overview_open());
+
+    check_ops_on_layout(&mut layout, [Op::FocusWorkspaceUp]);
+
+    assert!(!layout.is_grid_overview_open());
+    assert_eq!(layout.focus().map(|window| *window.id()), Some(1));
+}
+
 fn three_column_grid_layout(active: usize) -> Layout<TestWindow> {
     check_ops([
         Op::AddOutput(1),

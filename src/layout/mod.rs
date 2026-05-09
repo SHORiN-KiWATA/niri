@@ -2275,6 +2275,8 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn switch_workspace_up(&mut self) {
+        self.dismiss_grid_overview();
+
         let Some(monitor) = self.active_monitor() else {
             return;
         };
@@ -2282,6 +2284,8 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn switch_workspace_down(&mut self) {
+        self.dismiss_grid_overview();
+
         let Some(monitor) = self.active_monitor() else {
             return;
         };
@@ -2289,6 +2293,8 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn switch_workspace(&mut self, idx: usize) {
+        self.dismiss_grid_overview();
+
         let Some(monitor) = self.active_monitor() else {
             return;
         };
@@ -2296,6 +2302,8 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn switch_workspace_auto_back_and_forth(&mut self, idx: usize) {
+        self.dismiss_grid_overview();
+
         let Some(monitor) = self.active_monitor() else {
             return;
         };
@@ -2303,6 +2311,8 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn switch_workspace_previous(&mut self) {
+        self.dismiss_grid_overview();
+
         let Some(monitor) = self.active_monitor() else {
             return;
         };
