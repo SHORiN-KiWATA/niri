@@ -1164,6 +1164,12 @@ impl<W: LayoutElement> Layout<W> {
                 for mon in monitors {
                     for (idx, ws) in mon.workspaces.iter_mut().enumerate() {
                         if ws.has_window(window) {
+                            if ws.is_grid_overview_open()
+                                && ws.grid_focused_window_id().as_ref() == Some(window)
+                            {
+                                ws.activate_window_from_grid(window);
+                            }
+
                             let removed = ws.remove_tile(window, transaction);
                             ws.on_window_closed_in_grid();
 
@@ -1199,6 +1205,12 @@ impl<W: LayoutElement> Layout<W> {
             MonitorSet::NoOutputs { workspaces, .. } => {
                 for (idx, ws) in workspaces.iter_mut().enumerate() {
                     if ws.has_window(window) {
+                        if ws.is_grid_overview_open()
+                            && ws.grid_focused_window_id().as_ref() == Some(window)
+                        {
+                            ws.activate_window_from_grid(window);
+                        }
+
                         let removed = ws.remove_tile(window, transaction);
                         ws.on_window_closed_in_grid();
 
