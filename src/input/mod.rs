@@ -517,9 +517,12 @@ impl State {
                     }
                 }
 
+                let grid_has_keyboard_focus =
+                    this.niri.layout.is_grid_overview_open() && this.niri.keyboard_focus.is_layout();
+
                 if pressed && raw == Some(Keysym::Escape) {
                     // Close grid overview on Escape.
-                    if this.niri.layout.is_grid_overview_open() {
+                    if grid_has_keyboard_focus {
                         this.niri.layout.close_grid_overview();
                         this.niri.suppressed_keys.insert(key_code);
                         this.niri.queue_redraw_all();
@@ -539,7 +542,7 @@ impl State {
                 }
 
                 if pressed && raw == Some(Keysym::Return) {
-                    if this.niri.layout.is_grid_overview_open() {
+                    if grid_has_keyboard_focus {
                         this.niri.layout.confirm_grid_selection();
                         this.niri.suppressed_keys.insert(key_code);
                         this.niri.queue_redraw_all();
