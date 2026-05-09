@@ -3927,6 +3927,72 @@ impl Niri {
         self.queue_redraw_all();
     }
 
+    pub fn can_drag_magnifier_center(&self) -> bool {
+        let config = self.config.borrow();
+        self.magnifier_active
+            && !self.magnifier_capture.get()
+            && !config.magnifier.off
+            && !config.magnifier.track_cursor
+            && self.magnifier_zoom > 1.0
+    }
+
+    pub fn begin_magnifier_center_drag(
+        &mut self,
+        location: Point<f64, Logical>,
+    ) -> Option<(Output, Point<i32, Physical>)> {
+        if !self.can_drag_magnifier_center() {
+            return None;
+        }
+
+        {
+            let borrowed = self.magnifier_center.borrow();
+            if let Some((weak, center)) = borrowed.as_ref() {
+                let output = weak.upgrade()?;
+                let output_geo = self.global_space.output_geometry(&output)?;
+                if output_geo.to_f64().contains(location) {
+                    let center = self.clamp_magnifier_center_to_output(&output, *center);
+                    return Some((output, center));
+                }
+
+                return None;
+            }
+        }
+
+        let Some((output, pos_within_output)) = self.output_under(location) else {
+            return None;
+        };
+        let output = output.clone();
+        let output_scale = Scale::from(output.current_scale().fractional_scale());
+        let center = pos_within_output.to_physical_precise_round(output_scale);
+
+        *self.magnifier_center.borrow_mut() = Some((output.downgrade(), center));
+        Some((output, center))
+    }
+
+    pub fn set_magnifier_center(&mut self, output: &Output, center: Point<i32, Physical>) -> bool {
+        if !self.can_drag_magnifier_center() {
+            return false;
+        }
+
+        let center = self.clamp_magnifier_center_to_output(output, center);
+        *self.magnifier_center.borrow_mut() = Some((output.downgrade(), center));
+        self.queue_redraw(&output);
+        true
+    }
+
+    fn clamp_magnifier_center_to_output(
+        &self,
+        output: &Output,
+        center: Point<i32, Physical>,
+    ) -> Point<i32, Physical> {
+        let size = output.current_mode().unwrap().size;
+        let size = output.current_transform().transform_size(size);
+        let max_x = (size.w - 1).max(0);
+        let max_y = (size.h - 1).max(0);
+
+        Point::from((center.x.clamp(0, max_x), center.y.clamp(0, max_y)))
+    }
+
     fn reconcile_magnifier_config(
         &mut self,
         was_off: bool,

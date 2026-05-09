@@ -39,6 +39,7 @@ use smithay::wayland::pointer_constraints::{with_pointer_constraint, PointerCons
 use smithay::wayland::tablet_manager::{TabletDescriptor, TabletSeatTrait};
 use touch_overview_grab::TouchOverviewGrab;
 
+use self::magnifier_center_grab::MagnifierCenterGrab;
 use self::move_grab::MoveGrab;
 use self::pick_color_grab::PickColorGrab;
 use self::pick_window_grab::PickWindowGrab;
@@ -55,6 +56,7 @@ use crate::utils::spawning::{spawn, spawn_sh};
 use crate::utils::{center, get_monotonic_time, CastSessionId, ResizeEdge};
 
 pub mod backend_ext;
+pub mod magnifier_center_grab;
 pub mod move_grab;
 pub mod pick_color_grab;
 pub mod pick_window_grab;
@@ -517,8 +519,8 @@ impl State {
                     }
                 }
 
-                let grid_has_keyboard_focus =
-                    this.niri.layout.is_grid_overview_open() && this.niri.keyboard_focus.is_layout();
+                let grid_has_keyboard_focus = this.niri.layout.is_grid_overview_open()
+                    && this.niri.keyboard_focus.is_layout();
 
                 if pressed && raw == Some(Keysym::Escape) {
                     // Close grid overview on Escape.
@@ -2946,6 +2948,29 @@ impl State {
                 }
             }
 
+            if button == Some(MouseButton::Middle)
+                && !pointer.is_grabbed()
+                && !mod_down
+                && self.niri.can_drag_magnifier_center()
+            {
+                let location = pointer.current_location();
+                if let Some((output, start_center)) =
+                    self.niri.begin_magnifier_center_drag(location)
+                {
+                    let start_data = PointerGrabStartData {
+                        focus: None,
+                        button: button_code,
+                        location,
+                    };
+                    let grab = MagnifierCenterGrab::new(start_data, output, start_center);
+                    pointer.set_grab(self, grab, serial, Focus::Clear);
+                    self.niri
+                        .cursor_manager
+                        .set_cursor_image(CursorImageStatus::Named(CursorIcon::AllScroll));
+                    return;
+                }
+            }
+
             if button == Some(MouseButton::Middle) && !pointer.is_grabbed() && mod_down {
                 let output_ws = if is_overview_open {
                     self.niri.workspace_under_cursor(true)
@@ -4482,7 +4507,10 @@ impl State {
     fn grab_can_be_cancelled_with_esc(grab: &(dyn PointerGrab<State> + 'static)) -> bool {
         let grab = grab.as_any();
 
-        grab.is::<PickWindowGrab>() || grab.is::<PickColorGrab>() || Self::is_dnd_grab(grab)
+        grab.is::<PickWindowGrab>()
+            || grab.is::<PickColorGrab>()
+            || grab.is::<MagnifierCenterGrab>()
+            || Self::is_dnd_grab(grab)
     }
 }
 
@@ -5217,7 +5245,10 @@ fn grab_allows_hot_corner(grab: &(dyn PointerGrab<State> + 'static)) -> bool {
     // - DnDGrab allows hot corner to DnD across workspaces.
     // - ClickGrab keeps pointer focus on the window, so the hot corner doesn't trigger.
     // - Touch grabs: touch doesn't trigger the hot corner.
-    if grab.is::<ResizeGrab>() || grab.is::<SpatialMovementGrab>() {
+    if grab.is::<ResizeGrab>()
+        || grab.is::<SpatialMovementGrab>()
+        || grab.is::<MagnifierCenterGrab>()
+    {
         return false;
     }
 
