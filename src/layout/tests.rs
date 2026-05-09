@@ -3614,6 +3614,275 @@ fn grid_overview_preserves_fullscreen() {
 }
 
 #[test]
+fn grid_overview_fullscreen_preview_is_larger_than_normal_column() {
+    let ops = [
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::Communicate(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::Communicate(2),
+        Op::FocusWindow(1),
+        Op::FullscreenWindow(1),
+        Op::Communicate(1),
+        Op::ToggleGridOverview,
+    ];
+
+    let layout = check_ops(ops);
+    let go = layout
+        .active_workspace()
+        .and_then(|ws| ws.grid_overview())
+        .unwrap();
+
+    let size_for = |id| {
+        go.layout
+            .entries
+            .iter()
+            .find_map(|(item, info)| (item.window_id() == &id).then_some(info.target_size))
+            .unwrap()
+    };
+
+    let fullscreen = size_for(1);
+    let normal = size_for(2);
+
+    assert!(
+        fullscreen.w * fullscreen.h > normal.w * normal.h,
+        "fullscreen grid preview should be larger than normal column: fullscreen={fullscreen:?}, normal={normal:?}"
+    );
+}
+
+#[test]
+fn grid_overview_packs_visual_gap_with_fullscreen() {
+    let ops = [
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::Communicate(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::Communicate(2),
+        Op::FocusWindow(1),
+        Op::FullscreenWindow(1),
+        Op::Communicate(1),
+        Op::ToggleGridOverview,
+    ];
+
+    let layout = check_ops(ops);
+    let go = layout
+        .active_workspace()
+        .and_then(|ws| ws.grid_overview())
+        .unwrap();
+
+    let mut entries: Vec<_> = go
+        .layout
+        .entries
+        .iter()
+        .filter_map(|(item, info)| {
+            matches!(*item.window_id(), 1 | 2).then_some((info.target_pos, info.target_size))
+        })
+        .collect();
+    entries.sort_by(|(a, _), (b, _)| a.x.partial_cmp(&b.x).unwrap());
+
+    let visual_gap = entries[1].0.x - (entries[0].0.x + entries[0].1.w);
+
+    assert!(
+        (visual_gap - go.layout.gap).abs() < 0.0001,
+        "grid visual gap should match configured gap: visual_gap={visual_gap}, configured={}",
+        go.layout.gap
+    );
+}
+
+#[test]
+fn grid_overview_fill_scale_makes_padding_visual() {
+    let ops = vec![
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::Communicate(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::Communicate(2),
+        Op::FocusWindow(1),
+        Op::FullscreenWindow(1),
+        Op::Communicate(1),
+        Op::ToggleGridOverview,
+    ];
+
+    let bounds_for_padding = |padding| {
+        let options = Options {
+            grid_overview: niri_config::GridOverview {
+                padding,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let layout = check_ops_with_options(options, ops.clone());
+        let ws = layout.active_workspace().unwrap();
+        let area = ws.working_area();
+        let go = ws.grid_overview().unwrap();
+
+        let mut min_x = f64::MAX;
+        let mut min_y = f64::MAX;
+        let mut max_x = f64::MIN;
+        let mut max_y = f64::MIN;
+        for (_, info) in &go.layout.entries {
+            min_x = min_x.min(info.target_pos.x);
+            min_y = min_y.min(info.target_pos.y);
+            max_x = max_x.max(info.target_pos.x + info.target_size.w);
+            max_y = max_y.max(info.target_pos.y + info.target_size.h);
+        }
+
+        (area, min_x, min_y, max_x, max_y)
+    };
+
+    let (area, min_x, min_y, max_x, max_y) = bounds_for_padding(0.);
+    let right = area.loc.x + area.size.w;
+    let bottom = area.loc.y + area.size.h;
+    let closest_edge = (min_x - area.loc.x)
+        .min(min_y - area.loc.y)
+        .min(right - max_x)
+        .min(bottom - max_y);
+    assert!(
+        closest_edge.abs() < 0.0001,
+        "grid should fill to at least one content edge: closest_edge={closest_edge}"
+    );
+
+    let (_, padded_min_x, padded_min_y, padded_max_x, padded_max_y) = bounds_for_padding(100.);
+    let area_without_padding = (max_x - min_x) * (max_y - min_y);
+    let area_with_padding = (padded_max_x - padded_min_x) * (padded_max_y - padded_min_y);
+    assert!(
+        area_without_padding > area_with_padding,
+        "larger padding should reduce the packed grid size: without={area_without_padding}, with={area_with_padding}"
+    );
+}
+
+#[test]
+fn grid_overview_floating_uses_blended_tiling_scale_when_mixed() {
+    let mut floating = TestWindowParams::new(2);
+    floating.is_floating = true;
+
+    let ops = [
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::Communicate(1),
+        Op::FullscreenWindow(1),
+        Op::Communicate(1),
+        Op::AddWindow { params: floating },
+        Op::Communicate(2),
+        Op::ToggleGridOverview,
+    ];
+
+    let layout = check_ops(ops);
+    let go = layout
+        .active_workspace()
+        .and_then(|ws| ws.grid_overview())
+        .unwrap();
+
+    let info_for = |id| {
+        go.layout
+            .entries
+            .iter()
+            .find_map(|(item, info)| (item.window_id() == &id).then_some(info))
+            .unwrap()
+    };
+
+    let fullscreen = info_for(1);
+    let floating = info_for(2);
+    let fullscreen_scale = fullscreen.target_scale;
+    let floating_scale = floating.target_scale;
+
+    assert!(
+        floating_scale > fullscreen_scale,
+        "mixed floating grid preview should be allowed to grow above the tiling scale: fullscreen={fullscreen_scale}, floating={floating_scale}"
+    );
+    assert!(
+        floating.target_size.w * floating.target_size.h
+            < fullscreen.target_size.w * fullscreen.target_size.h,
+        "mixed floating grid preview should not visually dominate fullscreen tiling: fullscreen={:?}, floating={:?}",
+        fullscreen.target_size,
+        floating.target_size
+    );
+}
+
+#[test]
+fn grid_overview_does_not_upscale_single_floating_window() {
+    let mut floating = TestWindowParams::new(1);
+    floating.is_floating = true;
+
+    let layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow { params: floating },
+        Op::ToggleGridOverview,
+        Op::CompleteAnimations,
+    ]);
+    let go = layout
+        .active_workspace()
+        .and_then(|ws| ws.grid_overview())
+        .unwrap();
+    let (item, info) = go.layout.entries.first().unwrap();
+
+    assert!(
+        info.target_scale <= 1.,
+        "floating grid preview should not upscale: target_scale={}",
+        info.target_scale
+    );
+    assert!(
+        info.target_scale * go.entry_focus_boost(item, info) <= 1.,
+        "focused floating grid preview should not visually upscale: target_scale={}, boost={}",
+        info.target_scale,
+        go.entry_focus_boost(item, info)
+    );
+}
+
+#[test]
+fn grid_overview_does_not_upscale_mixed_floating_window() {
+    let mut floating = TestWindowParams::new(2);
+    floating.is_floating = true;
+
+    let layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow { params: floating },
+        Op::FocusWindow(2),
+        Op::ToggleGridOverview,
+        Op::CompleteAnimations,
+    ]);
+    let go = layout
+        .active_workspace()
+        .and_then(|ws| ws.grid_overview())
+        .unwrap();
+    let (item, info) = go
+        .layout
+        .entries
+        .iter()
+        .find(|(item, _)| item.window_id() == &2)
+        .unwrap();
+
+    assert!(
+        info.target_scale <= 1.,
+        "mixed floating grid preview should not upscale: target_scale={}",
+        info.target_scale
+    );
+    assert!(
+        info.target_scale * go.entry_focus_boost(item, info) <= 1.,
+        "focused mixed floating grid preview should not visually upscale: target_scale={}, boost={}",
+        info.target_scale,
+        go.entry_focus_boost(item, info)
+    );
+}
+
+#[test]
 fn grid_overview_preserves_maximized() {
     let ops = [
         Op::AddOutput(1),
@@ -3692,6 +3961,100 @@ fn grid_navigation_does_not_activate_window_until_confirmed() {
 }
 
 #[test]
+fn grid_implicit_window_width_targets_grid_focus() {
+    let mut layout = two_column_grid_focused_on_second();
+
+    layout.set_window_width(None, SizeChange::SetFixed(333));
+    layout.verify_invariants();
+
+    let win1 = layout.windows().find(|(_, win)| *win.id() == 1).unwrap().1;
+    let win2 = layout.windows().find(|(_, win)| *win.id() == 2).unwrap().1;
+    assert_ne!(win1.requested_size().unwrap().w, 333);
+    assert_eq!(win2.requested_size().unwrap().w, 333);
+}
+
+#[test]
+fn grid_implicit_window_height_targets_grid_focus() {
+    let mut layout = two_column_grid_focused_on_second();
+
+    layout.set_window_height(None, SizeChange::SetFixed(222));
+    layout.verify_invariants();
+
+    let win1 = layout.windows().find(|(_, win)| *win.id() == 1).unwrap().1;
+    let win2 = layout.windows().find(|(_, win)| *win.id() == 2).unwrap().1;
+    assert_ne!(win1.requested_size().unwrap().h, 222);
+    assert_eq!(win2.requested_size().unwrap().h, 222);
+}
+
+#[test]
+fn grid_column_width_targets_grid_focus() {
+    let mut layout = two_column_grid_focused_on_second();
+
+    layout.set_column_width(SizeChange::SetFixed(444));
+    layout.verify_invariants();
+
+    let win1 = layout.windows().find(|(_, win)| *win.id() == 1).unwrap().1;
+    let win2 = layout.windows().find(|(_, win)| *win.id() == 2).unwrap().1;
+    assert_ne!(win1.requested_size().unwrap().w, 444);
+    assert_eq!(win2.requested_size().unwrap().w, 444);
+}
+
+#[test]
+fn grid_full_width_targets_grid_focus() {
+    let mut layout = two_column_grid_focused_on_second();
+
+    layout.toggle_full_width();
+    layout.verify_invariants();
+
+    let win1 = layout.windows().find(|(_, win)| *win.id() == 1).unwrap().1;
+    let win2 = layout.windows().find(|(_, win)| *win.id() == 2).unwrap().1;
+    assert!(win2.requested_size().unwrap().w > win1.requested_size().unwrap().w);
+}
+
+#[test]
+fn grid_fullscreen_and_maximize_target_grid_focus() {
+    let mut fullscreen = two_column_grid_focused_on_second();
+    let focus = *fullscreen.focus().unwrap().id();
+    assert_eq!(focus, 2);
+
+    fullscreen.toggle_fullscreen(&focus);
+    fullscreen.verify_invariants();
+
+    let win1 = fullscreen
+        .windows()
+        .find(|(_, win)| *win.id() == 1)
+        .unwrap()
+        .1;
+    let win2 = fullscreen
+        .windows()
+        .find(|(_, win)| *win.id() == 2)
+        .unwrap()
+        .1;
+    assert_eq!(win1.pending_sizing_mode(), SizingMode::Normal);
+    assert_eq!(win2.pending_sizing_mode(), SizingMode::Fullscreen);
+
+    let mut maximized = two_column_grid_focused_on_second();
+    let focus = *maximized.focus().unwrap().id();
+    assert_eq!(focus, 2);
+
+    maximized.toggle_maximized(&focus);
+    maximized.verify_invariants();
+
+    let win1 = maximized
+        .windows()
+        .find(|(_, win)| *win.id() == 1)
+        .unwrap()
+        .1;
+    let win2 = maximized
+        .windows()
+        .find(|(_, win)| *win.id() == 2)
+        .unwrap()
+        .1;
+    assert_eq!(win1.pending_sizing_mode(), SizingMode::Normal);
+    assert_eq!(win2.pending_sizing_mode(), SizingMode::Maximized);
+}
+
+#[test]
 fn grid_closing_keeps_all_tabbed_items_visible() {
     let layout = check_ops([
         Op::AddOutput(1),
@@ -3714,6 +4077,36 @@ fn grid_closing_keeps_all_tabbed_items_visible() {
     // All tabs should be visible during closing (active tab will be rendered on top).
     assert!(scrolling.grid_item_visible_when_closing(&active_item));
     assert!(scrolling.grid_item_visible_when_closing(&inactive_item));
+}
+
+#[test]
+fn grid_closing_renders_fullscreen_tiling_above_other_grid_items() {
+    let mut floating = TestWindowParams::new(3);
+    floating.is_floating = true;
+
+    let layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::AddWindow { params: floating },
+        Op::FocusWindow(1),
+        Op::FullscreenWindow(1),
+        Op::Communicate(1),
+        Op::ToggleGridOverview,
+    ]);
+
+    let ws = layout.active_workspace().unwrap();
+    let fullscreen_item = ws.scrolling().grid_item_for_window(&1).unwrap();
+    let normal_item = ws.scrolling().grid_item_for_window(&2).unwrap();
+    let floating_item = super::grid_overview::GridItem::Floating { window_id: 3 };
+
+    assert!(ws.grid_item_renders_on_top_when_grid_closing_for_tests(&fullscreen_item));
+    assert!(!ws.grid_item_renders_on_top_when_grid_closing_for_tests(&normal_item));
+    assert!(!ws.grid_item_renders_on_top_when_grid_closing_for_tests(&floating_item));
 }
 
 #[test]
@@ -3806,6 +4199,36 @@ fn three_column_grid_layout(active: usize) -> Layout<TestWindow> {
         },
         Op::FocusWindow(active),
     ])
+}
+
+fn two_column_grid_focused_on_second() -> Layout<TestWindow> {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::FocusWindow(1),
+        Op::ToggleGridOverview,
+    ]);
+    layout.focus_right();
+    layout.verify_invariants();
+
+    assert!(layout.is_grid_overview_open());
+    assert_eq!(layout.grid_focused_window_id(), Some(2));
+    assert_eq!(
+        layout
+            .active_workspace()
+            .unwrap()
+            .active_window()
+            .unwrap()
+            .id(),
+        &1
+    );
+
+    layout
 }
 
 #[test]

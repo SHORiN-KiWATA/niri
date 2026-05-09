@@ -689,6 +689,40 @@ impl<W: LayoutElement> Workspace<W> {
         }
     }
 
+    fn grid_item_renders_on_top_when_grid_closing(&self, item: &GridItem<W>) -> bool {
+        match item {
+            GridItem::Column { col_idx, .. } => self
+                .scrolling
+                .columns()
+                .nth(*col_idx)
+                .is_some_and(|col| col.pending_sizing_mode().is_fullscreen()),
+            GridItem::Tab {
+                col_idx, window_id, ..
+            } => {
+                let Some(col) = self.scrolling.columns().nth(*col_idx) else {
+                    return false;
+                };
+                if !col.pending_sizing_mode().is_fullscreen() {
+                    return false;
+                }
+
+                let active_idx = self.scrolling.column_active_tile_idx(*col_idx);
+                col.tiles()
+                    .nth(active_idx)
+                    .is_some_and(|(tile, _)| tile.window().id() == window_id)
+            }
+            GridItem::Floating { .. } => false,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn grid_item_renders_on_top_when_grid_closing_for_tests(
+        &self,
+        item: &GridItem<W>,
+    ) -> bool {
+        self.grid_item_renders_on_top_when_grid_closing(item)
+    }
+
     fn grid_item_visual_transform(
         &self,
         go: &GridOverview<W>,
@@ -1592,7 +1626,26 @@ impl<W: LayoutElement> Workspace<W> {
         self.scrolling.center_visible_columns();
     }
 
+    fn implicit_grid_window(&self, window: Option<&W::Id>) -> Option<W::Id> {
+        if window.is_none() && self.is_grid_overview_open() {
+            self.grid_focused_window_id()
+        } else {
+            None
+        }
+    }
+
     pub fn toggle_width(&mut self, forwards: bool) {
+        if self.is_grid_overview_open() {
+            if let Some(id) = self.grid_focused_window_id() {
+                if self.floating.has_window(&id) {
+                    self.floating.toggle_window_width(Some(&id), forwards);
+                } else {
+                    self.scrolling.toggle_window_width(Some(&id), forwards);
+                }
+                return;
+            }
+        }
+
         if self.floating_is_active.get() {
             self.floating.toggle_window_width(None, forwards);
         } else {
@@ -1601,6 +1654,15 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn toggle_full_width(&mut self) {
+        if self.is_grid_overview_open() {
+            if let Some(id) = self.grid_focused_window_id() {
+                if !self.floating.has_window(&id) {
+                    self.scrolling.toggle_full_width_for_window(&id);
+                }
+                return;
+            }
+        }
+
         if self.floating_is_active.get() {
             // Leave this unimplemented for now. For good UX, this probably needs moving the tile
             // to be against the left edge of the working area while it is full-width.
@@ -1612,7 +1674,11 @@ impl<W: LayoutElement> Workspace<W> {
     pub fn set_column_width(&mut self, change: SizeChange) {
         if self.is_grid_overview_open() {
             if let Some(id) = self.grid_focused_window_id() {
-                self.scrolling.set_window_width(Some(&id), change);
+                if self.floating.has_window(&id) {
+                    self.floating.set_window_width(Some(&id), change, true);
+                } else {
+                    self.scrolling.set_window_width(Some(&id), change);
+                }
                 return;
             }
         }
@@ -1624,6 +1690,9 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn set_window_width(&mut self, window: Option<&W::Id>, change: SizeChange) {
+        let grid_window = self.implicit_grid_window(window);
+        let window = window.or(grid_window.as_ref());
+
         if window.map_or(self.floating_is_active.get(), |id| {
             self.floating.has_window(id)
         }) {
@@ -1634,6 +1703,9 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn set_window_height(&mut self, window: Option<&W::Id>, change: SizeChange) {
+        let grid_window = self.implicit_grid_window(window);
+        let window = window.or(grid_window.as_ref());
+
         if window.map_or(self.floating_is_active.get(), |id| {
             self.floating.has_window(id)
         }) {
@@ -1644,6 +1716,9 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn reset_window_height(&mut self, window: Option<&W::Id>) {
+        let grid_window = self.implicit_grid_window(window);
+        let window = window.or(grid_window.as_ref());
+
         if window.map_or(self.floating_is_active.get(), |id| {
             self.floating.has_window(id)
         }) {
@@ -1653,6 +1728,9 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn toggle_window_width(&mut self, window: Option<&W::Id>, forwards: bool) {
+        let grid_window = self.implicit_grid_window(window);
+        let window = window.or(grid_window.as_ref());
+
         if window.map_or(self.floating_is_active.get(), |id| {
             self.floating.has_window(id)
         }) {
@@ -1663,6 +1741,9 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn toggle_window_height(&mut self, window: Option<&W::Id>, forwards: bool) {
+        let grid_window = self.implicit_grid_window(window);
+        let window = window.or(grid_window.as_ref());
+
         if window.map_or(self.floating_is_active.get(), |id| {
             self.floating.has_window(id)
         }) {
@@ -2218,6 +2299,9 @@ impl<W: LayoutElement> Workspace<W> {
             let is_inactive_tab_item = |item: &GridItem<W>| {
                 matches!(item, GridItem::Tab { .. }) && !is_active_tab_item(item)
             };
+            let renders_on_top_when_closing = |item: &GridItem<W>| {
+                is_closing && self.grid_item_renders_on_top_when_grid_closing(item)
+            };
 
             let mut render_grid_item = |ctx: &mut RenderCtx<R>,
                                         item: &GridItem<W>,
@@ -2314,6 +2398,15 @@ impl<W: LayoutElement> Workspace<W> {
                 }
             };
 
+            if is_closing {
+                for (item, info) in &layout.entries {
+                    let is_focused = info.row == focus.0 && info.col == focus.1;
+                    if should_render_grid_item(item) && renders_on_top_when_closing(item) {
+                        render_grid_item(&mut ctx, item, info, is_focused);
+                    }
+                }
+            }
+
             // Render elements are queued top-to-bottom. Keep floating grid items above tiling grid
             // items while preserving the existing within-layer focus and tab ordering.
             for render_floating_layer in [true, false] {
@@ -2326,6 +2419,7 @@ impl<W: LayoutElement> Workspace<W> {
                     if is_focused
                         && should_render_grid_item(item)
                         && is_item_in_layer(item)
+                        && !renders_on_top_when_closing(item)
                         && !(is_closing && is_inactive_tab_item(item))
                     {
                         render_grid_item(&mut ctx, item, info, true);
@@ -2340,6 +2434,7 @@ impl<W: LayoutElement> Workspace<W> {
                         if !is_focused
                             && should_render_grid_item(item)
                             && is_item_in_layer(item)
+                            && !renders_on_top_when_closing(item)
                             && is_active_tab_item(item)
                         {
                             render_grid_item(&mut ctx, item, info, false);
@@ -2353,6 +2448,7 @@ impl<W: LayoutElement> Workspace<W> {
                         if is_focused
                             && should_render_grid_item(item)
                             && is_item_in_layer(item)
+                            && !renders_on_top_when_closing(item)
                             && is_inactive_tab_item(item)
                         {
                             render_grid_item(&mut ctx, item, info, false);
@@ -2363,6 +2459,9 @@ impl<W: LayoutElement> Workspace<W> {
                 for (item, info) in &layout.entries {
                     let is_focused = info.row == focus.0 && info.col == focus.1;
                     if is_focused || !should_render_grid_item(item) || !is_item_in_layer(item) {
+                        continue;
+                    }
+                    if renders_on_top_when_closing(item) {
                         continue;
                     }
                     if (is_opening || is_closing) && is_active_tab_item(item) {
@@ -2829,6 +2928,11 @@ impl<W: LayoutElement> Workspace<W> {
 
     pub fn layout_config(&self) -> Option<&niri_config::LayoutPart> {
         self.layout_config.as_ref()
+    }
+
+    #[cfg(test)]
+    pub fn grid_overview(&self) -> Option<&GridOverview<W>> {
+        self.grid_overview.as_ref()
     }
 
     #[cfg(test)]

@@ -350,7 +350,12 @@ impl<W: LayoutElement> GridOverview<W> {
         };
 
         // Prevent spring overshoot from shrinking the item below its normal size.
-        boost.max(1.)
+        let boost = boost.max(1.);
+        if matches!(item, GridItem::Floating { .. }) {
+            boost.min(1. / info.target_scale.max(0.0001)).max(1.)
+        } else {
+            boost
+        }
     }
 
     pub fn set_focus(&mut self, focus: (usize, usize)) {
@@ -682,6 +687,9 @@ pub struct GridLayout<W: LayoutElement> {
     pub entries: Vec<(GridItem<W>, GridEntryInfo)>,
 }
 
+const TILING_GRID_SCALE_WEIGHT: f64 = 0.5;
+const MIXED_FLOATING_GRID_SCALE_WEIGHT: f64 = 0.5;
+
 impl<W: LayoutElement> Clone for GridLayout<W> {
     fn clone(&self) -> Self {
         Self {
@@ -731,35 +739,119 @@ impl<W: LayoutElement> GridLayout<W> {
         let cell_h = (content_h - gap * (rows as f64 - 1.)) / rows as f64;
         let cell_ar = cell_w / cell_h;
 
-        let mut out_entries = Vec::with_capacity(n);
+        let tiling_scale = entries
+            .iter()
+            .filter(|(item, _)| !matches!(item, GridItem::Floating { .. }))
+            .map(|(_, in_size)| Self::entry_fit_scale(*in_size, cell_w, cell_h, cell_ar, config))
+            .reduce(f64::min);
+
+        let mut entry_sizes = Vec::with_capacity(n);
+        let mut row_content_widths = vec![0.0_f64; rows];
+        let mut row_heights = vec![0.0_f64; rows];
+        let mut row_counts = vec![0usize; rows];
 
         for (idx, (item, in_size)) in entries.iter().enumerate() {
             let row = idx / cols;
             let col = idx % cols;
 
-            let tile_ar = in_size.w / in_size.h.max(1.);
-
-            let (scaled_w, scaled_h) = if tile_ar > cell_ar {
-                let sw = cell_w;
-                let sh = sw / tile_ar;
-                (sw, sh.max(cell_h * config.min_scale))
+            let is_floating = matches!(item, GridItem::Floating { .. });
+            let target_scale = if is_floating {
+                if let Some(target_scale) = tiling_scale {
+                    let independent_scale =
+                        Self::entry_fit_scale(*in_size, cell_w, cell_h, cell_ar, config);
+                    Self::blend_scale(
+                        target_scale,
+                        independent_scale,
+                        MIXED_FLOATING_GRID_SCALE_WEIGHT,
+                    )
+                } else {
+                    Self::entry_fit_scale(*in_size, cell_w, cell_h, cell_ar, config)
+                }
             } else {
-                let sh = cell_h;
-                let sw = sh * tile_ar;
-                (sw.max(cell_w * config.min_scale), sh)
+                let independent_scale =
+                    Self::entry_fit_scale(*in_size, cell_w, cell_h, cell_ar, config);
+                let uniform_scale = tiling_scale.unwrap_or(independent_scale);
+                Self::blend_scale(
+                    uniform_scale,
+                    independent_scale,
+                    TILING_GRID_SCALE_WEIGHT,
+                )
             };
-
-            let target_scale = scaled_w / in_size.w.max(1.);
-
-            let cell_x = padding + col as f64 * (cell_w + gap);
-            let cell_y = padding + row as f64 * (cell_h + gap);
-
-            let target_pos = Point::from((
-                area.loc.x + cell_x + (cell_w - scaled_w) / 2.,
-                area.loc.y + cell_y + (cell_h - scaled_h) / 2.,
-            ));
+            let target_scale = if is_floating {
+                target_scale.min(1.)
+            } else {
+                target_scale
+            };
+            let scaled_w = in_size.w * target_scale;
+            let scaled_h = in_size.h * target_scale;
 
             let target_size = Size::from((scaled_w, scaled_h));
+
+            row_content_widths[row] += target_size.w;
+            row_heights[row] = row_heights[row].max(target_size.h);
+            row_counts[row] += 1;
+
+            entry_sizes.push((row, col, target_size, target_scale, is_floating));
+        }
+
+        let fill_scale_for_width = row_content_widths
+            .iter()
+            .zip(&row_counts)
+            .filter(|(_, count)| **count > 0)
+            .map(|(content_width, count)| {
+                let gap_width = gap * count.saturating_sub(1) as f64;
+                ((content_w - gap_width).max(1.) / content_width.max(1.)).max(0.)
+            })
+            .reduce(f64::min)
+            .unwrap_or(1.);
+        let row_gap_height = gap * rows.saturating_sub(1) as f64;
+        let fill_scale_for_height = ((content_h - row_gap_height).max(1.)
+            / row_heights.iter().sum::<f64>().max(1.))
+        .max(0.);
+        let fill_scale = fill_scale_for_width.min(fill_scale_for_height);
+
+        if fill_scale.is_finite() && fill_scale != 1. {
+            row_content_widths.fill(0.);
+            row_heights.fill(0.);
+
+            for (row, _, target_size, target_scale, is_floating) in &mut entry_sizes {
+                let item_fill_scale = if *is_floating {
+                    fill_scale.min(1. / target_scale.max(0.0001))
+                } else {
+                    fill_scale
+                };
+
+                *target_size = target_size.upscale(item_fill_scale);
+                *target_scale *= item_fill_scale;
+
+                row_content_widths[*row] += target_size.w;
+                row_heights[*row] = row_heights[*row].max(target_size.h);
+            }
+        }
+
+        let packed_h = row_heights.iter().sum::<f64>() + gap * (rows - 1) as f64;
+        let start_y = area.loc.y + padding + (content_h - packed_h) / 2.;
+        let mut row_offsets = Vec::with_capacity(rows);
+        let mut next_y = 0.;
+        for height in &row_heights {
+            row_offsets.push(next_y);
+            next_y += height + gap;
+        }
+
+        let mut row_next_x = vec![0.; rows];
+        let mut out_entries = Vec::with_capacity(n);
+
+        for ((item, _), (row, col, target_size, target_scale, _)) in
+            entries.iter().zip(entry_sizes)
+        {
+            let row_width =
+                row_content_widths[row] + gap * row_counts[row].saturating_sub(1) as f64;
+            let row_start_x = area.loc.x + padding + (content_w - row_width) / 2.;
+            let target_pos = Point::from((
+                row_start_x + row_next_x[row],
+                start_y + row_offsets[row] + (row_heights[row] - target_size.h) / 2.,
+            ));
+            row_next_x[row] += target_size.w + gap;
 
             out_entries.push((
                 item.clone(),
@@ -779,6 +871,43 @@ impl<W: LayoutElement> GridLayout<W> {
             gap,
             entries: out_entries,
         }
+    }
+
+    fn entry_fit_size(
+        in_size: Size<f64, Logical>,
+        cell_w: f64,
+        cell_h: f64,
+        cell_ar: f64,
+        config: &niri_config::GridOverview,
+    ) -> (f64, f64, f64) {
+        let tile_ar = in_size.w / in_size.h.max(1.);
+
+        let (scaled_w, scaled_h) = if tile_ar > cell_ar {
+            let sw = cell_w;
+            let sh = sw / tile_ar;
+            (sw, sh.max(cell_h * config.min_scale))
+        } else {
+            let sh = cell_h;
+            let sw = sh * tile_ar;
+            (sw.max(cell_w * config.min_scale), sh)
+        };
+
+        let target_scale = scaled_w / in_size.w.max(1.);
+        (scaled_w, scaled_h, target_scale)
+    }
+
+    fn entry_fit_scale(
+        in_size: Size<f64, Logical>,
+        cell_w: f64,
+        cell_h: f64,
+        cell_ar: f64,
+        config: &niri_config::GridOverview,
+    ) -> f64 {
+        Self::entry_fit_size(in_size, cell_w, cell_h, cell_ar, config).2
+    }
+
+    fn blend_scale(uniform_scale: f64, independent_scale: f64, independent_weight: f64) -> f64 {
+        uniform_scale * (independent_scale / uniform_scale).powf(independent_weight)
     }
 }
 
