@@ -740,6 +740,15 @@ impl<W: LayoutElement> Workspace<W> {
             return false;
         };
 
+        let column_tile_focus = if let GridItem::Column { col_idx, .. } = &item {
+            self.scrolling
+                .columns()
+                .nth(*col_idx)
+                .and_then(|col| col.position(id).map(|tile_idx| (*col_idx, tile_idx)))
+        } else {
+            None
+        };
+
         let Some(go) = self.grid_overview.as_mut() else {
             return false;
         };
@@ -749,7 +758,11 @@ impl<W: LayoutElement> Workspace<W> {
         };
 
         go.set_focus((row, col));
-        go.set_focused_window_id(id.clone());
+        if let Some((col_idx, tile_idx)) = column_tile_focus {
+            go.set_column_tile_focus(col_idx, tile_idx, id.clone());
+        } else {
+            go.set_focused_window_id(id.clone());
+        }
         true
     }
 

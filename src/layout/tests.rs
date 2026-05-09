@@ -3961,6 +3961,42 @@ fn grid_navigation_does_not_activate_window_until_confirmed() {
 }
 
 #[test]
+fn grid_confirming_column_tile_updates_grid_tile_focus_before_close_finishes() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::ConsumeOrExpelWindowLeft { id: None },
+        Op::FocusWindow(1),
+        Op::ToggleGridOverview,
+    ]);
+
+    assert!(layout.is_grid_overview_open());
+    assert_eq!(layout.grid_focused_window_id(), Some(1));
+    assert!(layout.confirm_grid_selection_for_window(&2));
+
+    let ws = layout.active_workspace().unwrap();
+    let item = ws.scrolling().grid_item_for_window(&2).unwrap();
+    let super::grid_overview::GridItem::Column { col_idx, .. } = item else {
+        panic!("expected a non-tabbed column grid item");
+    };
+    let tile_idx = ws
+        .scrolling()
+        .columns()
+        .nth(col_idx)
+        .and_then(|col| col.position(&2))
+        .unwrap();
+    let go = ws.grid_overview().unwrap();
+
+    assert_eq!(go.focused_id(), Some(2));
+    assert_eq!(go.get_column_tile_focus(col_idx), tile_idx);
+}
+
+#[test]
 fn grid_implicit_window_width_targets_grid_focus() {
     let mut layout = two_column_grid_focused_on_second();
 
