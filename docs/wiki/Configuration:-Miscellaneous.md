@@ -330,10 +330,22 @@ grid-overview {
 #### `padding`
 
 Set the padding around the grid.
+You can set one value for all sides, or configure each side separately.
 
 ```kdl
 grid-overview {
     padding 100
+}
+```
+
+```kdl
+grid-overview {
+    padding {
+        left 64
+        right 64
+        top 48
+        bottom 48
+    }
 }
 ```
 

@@ -110,6 +110,7 @@ pub struct GridOverview<W: LayoutElement> {
     pub rearrange_anim: Option<Animation>,
     pub previous_focus: Option<(usize, usize)>,
     pub focus_boost_anim: Option<Animation>,
+    added_window_ids: Vec<W::Id>,
     /// col_idx → tile_idx for Column items that have multiple tiles.
     pub column_tile_focus: Vec<(usize, usize)>,
     pub clock: Clock,
@@ -132,6 +133,7 @@ impl<W: LayoutElement> GridOverview<W> {
             rearrange_anim: None,
             previous_focus: None,
             focus_boost_anim: None,
+            added_window_ids: Vec::new(),
             column_tile_focus: Vec::new(),
             clock,
             options,
@@ -580,6 +582,16 @@ impl<W: LayoutElement> GridOverview<W> {
         }
     }
 
+    pub(super) fn record_added_window(&mut self, id: W::Id) {
+        if !self.added_window_ids.contains(&id) {
+            self.added_window_ids.push(id);
+        }
+    }
+
+    pub(super) fn window_was_added_while_open(&self, id: &W::Id) -> bool {
+        self.added_window_ids.contains(id)
+    }
+
     pub fn focused_info(&self) -> Option<&GridEntryInfo> {
         let idx = self.focus.0 * self.layout.cols + self.focus.1;
         self.layout.entries.get(idx).map(|(_, info)| info)
@@ -724,8 +736,8 @@ impl<W: LayoutElement> GridLayout<W> {
         let gap = config.gap;
         let padding = config.padding;
 
-        let content_w = (area.size.w - padding * 2.).max(1.);
-        let content_h = (area.size.h - padding * 2.).max(1.);
+        let content_w = (area.size.w - padding.left - padding.right).max(1.);
+        let content_h = (area.size.h - padding.top - padding.bottom).max(1.);
         let aspect = content_w / content_h;
 
         let mut cols = ((n as f64 * aspect).sqrt()).ceil().max(1.) as usize;
@@ -771,11 +783,7 @@ impl<W: LayoutElement> GridLayout<W> {
                 let independent_scale =
                     Self::entry_fit_scale(*in_size, cell_w, cell_h, cell_ar, config);
                 let uniform_scale = tiling_scale.unwrap_or(independent_scale);
-                Self::blend_scale(
-                    uniform_scale,
-                    independent_scale,
-                    TILING_GRID_SCALE_WEIGHT,
-                )
+                Self::blend_scale(uniform_scale, independent_scale, TILING_GRID_SCALE_WEIGHT)
             };
             let target_scale = if is_floating {
                 target_scale.min(1.)
@@ -830,7 +838,7 @@ impl<W: LayoutElement> GridLayout<W> {
         }
 
         let packed_h = row_heights.iter().sum::<f64>() + gap * (rows - 1) as f64;
-        let start_y = area.loc.y + padding + (content_h - packed_h) / 2.;
+        let start_y = area.loc.y + padding.top + (content_h - packed_h) / 2.;
         let mut row_offsets = Vec::with_capacity(rows);
         let mut next_y = 0.;
         for height in &row_heights {
@@ -841,12 +849,11 @@ impl<W: LayoutElement> GridLayout<W> {
         let mut row_next_x = vec![0.; rows];
         let mut out_entries = Vec::with_capacity(n);
 
-        for ((item, _), (row, col, target_size, target_scale, _)) in
-            entries.iter().zip(entry_sizes)
+        for ((item, _), (row, col, target_size, target_scale, _)) in entries.iter().zip(entry_sizes)
         {
             let row_width =
                 row_content_widths[row] + gap * row_counts[row].saturating_sub(1) as f64;
-            let row_start_x = area.loc.x + padding + (content_w - row_width) / 2.;
+            let row_start_x = area.loc.x + padding.left + (content_w - row_width) / 2.;
             let target_pos = Point::from((
                 row_start_x + row_next_x[row],
                 start_y + row_offsets[row] + (row_heights[row] - target_size.h) / 2.,

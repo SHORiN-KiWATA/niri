@@ -1036,7 +1036,7 @@ impl<W: LayoutElement> Layout<W> {
                 }
 
                 if let Some(ws) = mon.workspaces.iter_mut().find(|ws| ws.has_window(&id)) {
-                    ws.on_window_added_in_grid();
+                    ws.on_window_added_in_grid(&id);
                 }
 
                 Some(&mon.output)
@@ -1112,7 +1112,7 @@ impl<W: LayoutElement> Layout<W> {
                     }
                 }
 
-                workspaces[ws_idx].on_window_added_in_grid();
+                workspaces[ws_idx].on_window_added_in_grid(&id);
 
                 None
             }
@@ -1575,6 +1575,24 @@ impl<W: LayoutElement> Layout<W> {
 
                     return;
                 }
+            }
+        }
+    }
+
+    pub fn activate_window_from_activation(&mut self, window: &W::Id) {
+        let keep_grid_open = self.active_workspace().is_some_and(|ws| {
+            ws.is_grid_overview_open() && ws.grid_window_was_added_while_open(window)
+        });
+
+        if self.is_grid_overview_open() && !keep_grid_open {
+            self.dismiss_grid_overview();
+        }
+
+        self.activate_window(window);
+
+        if keep_grid_open {
+            if let Some(ws) = self.active_workspace_mut() {
+                ws.set_grid_focus_for_window(window);
             }
         }
     }

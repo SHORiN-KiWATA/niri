@@ -1,5 +1,5 @@
 use crate::appearance::{Color, WorkspaceShadow, WorkspaceShadowPart, DEFAULT_BACKDROP_COLOR};
-use crate::utils::{Flag, MergeWith};
+use crate::utils::{parse_arg_node, Flag, MergeWith};
 use crate::FloatOrInt;
 
 #[derive(knuffel::Decode, Debug, Clone, PartialEq, Eq)]
@@ -262,19 +262,163 @@ impl MergeWith<OverviewPart> for Overview {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GridOverview {
     pub gap: f64,
-    pub padding: f64,
+    pub padding: GridOverviewPadding,
     pub min_scale: f64,
     pub focused_column_scale: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GridOverviewPadding {
+    pub left: f64,
+    pub right: f64,
+    pub top: f64,
+    pub bottom: f64,
+}
+
+impl GridOverviewPadding {
+    pub fn uniform(value: f64) -> Self {
+        Self {
+            left: value,
+            right: value,
+            top: value,
+            bottom: value,
+        }
+    }
+}
+
+impl Default for GridOverviewPadding {
+    fn default() -> Self {
+        Self::uniform(100.)
+    }
 }
 
 impl Default for GridOverview {
     fn default() -> Self {
         Self {
             gap: 16.,
-            padding: 100.,
+            padding: GridOverviewPadding::default(),
             min_scale: 0.08,
             focused_column_scale: 1.04,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GridOverviewPaddingPart {
+    Uniform(f64),
+    Sides {
+        left: Option<f64>,
+        right: Option<f64>,
+        top: Option<f64>,
+        bottom: Option<f64>,
+    },
+}
+
+impl GridOverviewPaddingPart {
+    fn merge_into(&self, padding: &mut GridOverviewPadding) {
+        match *self {
+            Self::Uniform(value) => *padding = GridOverviewPadding::uniform(value),
+            Self::Sides {
+                left,
+                right,
+                top,
+                bottom,
+            } => {
+                if let Some(left) = left {
+                    padding.left = left;
+                }
+                if let Some(right) = right {
+                    padding.right = right;
+                }
+                if let Some(top) = top {
+                    padding.top = top;
+                }
+                if let Some(bottom) = bottom {
+                    padding.bottom = bottom;
+                }
+            }
+        }
+    }
+}
+
+impl<S: knuffel::traits::ErrorSpan> knuffel::Decode<S> for GridOverviewPaddingPart {
+    fn decode_node(
+        node: &knuffel::ast::SpannedNode<S>,
+        ctx: &mut knuffel::decode::Context<S>,
+    ) -> Result<Self, knuffel::errors::DecodeError<S>> {
+        let mut iter_args = node.arguments.iter();
+        if let Some(val) = iter_args.next() {
+            let value: FloatOrInt<0, { i32::MAX }> =
+                knuffel::traits::DecodeScalar::decode(val, ctx)?;
+
+            if let Some(val) = iter_args.next() {
+                ctx.emit_error(knuffel::errors::DecodeError::unexpected(
+                    &val.literal,
+                    "argument",
+                    "unexpected argument",
+                ));
+            }
+            for child in node.children() {
+                ctx.emit_error(knuffel::errors::DecodeError::unexpected(
+                    child,
+                    "node",
+                    "no child nodes expected for `padding` with an argument",
+                ));
+            }
+            for name in node.properties.keys() {
+                ctx.emit_error(knuffel::errors::DecodeError::unexpected(
+                    name,
+                    "property",
+                    "no properties expected for this node",
+                ));
+            }
+
+            return Ok(Self::Uniform(value.0));
+        }
+
+        let mut left = None;
+        let mut right = None;
+        let mut top = None;
+        let mut bottom = None;
+
+        for child in node.children() {
+            let value: FloatOrInt<0, { i32::MAX }> = match &**child.node_name {
+                "left" | "right" | "top" | "bottom" => {
+                    parse_arg_node(&child.node_name, child, ctx)?
+                }
+                name => {
+                    ctx.emit_error(knuffel::errors::DecodeError::unexpected(
+                        child,
+                        "node",
+                        format!("unknown padding property `{name}`"),
+                    ));
+                    continue;
+                }
+            };
+
+            match &**child.node_name {
+                "left" => left = Some(value.0),
+                "right" => right = Some(value.0),
+                "top" => top = Some(value.0),
+                "bottom" => bottom = Some(value.0),
+                _ => unreachable!(),
+            }
+        }
+
+        for name in node.properties.keys() {
+            ctx.emit_error(knuffel::errors::DecodeError::unexpected(
+                name,
+                "property",
+                "no properties expected for this node",
+            ));
+        }
+
+        Ok(Self::Sides {
+            left,
+            right,
+            top,
+            bottom,
+        })
     }
 }
 
@@ -282,8 +426,8 @@ impl Default for GridOverview {
 pub struct GridOverviewPart {
     #[knuffel(child, unwrap(argument))]
     pub gap: Option<FloatOrInt<0, { i32::MAX }>>,
-    #[knuffel(child, unwrap(argument))]
-    pub padding: Option<FloatOrInt<0, { i32::MAX }>>,
+    #[knuffel(child)]
+    pub padding: Option<GridOverviewPaddingPart>,
     #[knuffel(child, unwrap(argument))]
     pub min_scale: Option<FloatOrInt<0, 1>>,
     #[knuffel(child, unwrap(argument))]
@@ -296,7 +440,7 @@ impl MergeWith<GridOverviewPart> for GridOverview {
             self.gap = gap.0;
         }
         if let Some(padding) = &part.padding {
-            self.padding = padding.0;
+            padding.merge_into(&mut self.padding);
         }
         if let Some(min_scale) = &part.min_scale {
             self.min_scale = min_scale.0;

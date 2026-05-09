@@ -652,6 +652,45 @@ mod tests {
         assert_eq!(config.input.keyboard.repeat_rate, 25);
     }
 
+    #[test]
+    fn grid_overview_padding_parses_uniform_value() {
+        let config = Config::parse_mem(
+            r#"
+            grid-overview {
+                padding 42
+            }
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.grid_overview.padding.left, 42.);
+        assert_eq!(config.grid_overview.padding.right, 42.);
+        assert_eq!(config.grid_overview.padding.top, 42.);
+        assert_eq!(config.grid_overview.padding.bottom, 42.);
+    }
+
+    #[test]
+    fn grid_overview_padding_parses_per_edge_values() {
+        let config = Config::parse_mem(
+            r#"
+            grid-overview {
+                padding {
+                    left 1
+                    right 2
+                    top 3
+                    bottom 4
+                }
+            }
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.grid_overview.padding.left, 1.);
+        assert_eq!(config.grid_overview.padding.right, 2.);
+        assert_eq!(config.grid_overview.padding.top, 3.);
+        assert_eq!(config.grid_overview.padding.bottom, 4.);
+    }
+
     #[track_caller]
     fn do_parse(text: &str) -> Config {
         Config::parse_mem(text)

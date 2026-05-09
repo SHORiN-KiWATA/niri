@@ -470,9 +470,10 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn grid_navigate(&mut self, dir: GridDirection) {
-        let tile_changed = self.grid_overview.as_mut().and_then(|go| {
-            go.navigate(dir, |col_idx| self.scrolling.column_tile_count(col_idx))
-        });
+        let tile_changed = self
+            .grid_overview
+            .as_mut()
+            .and_then(|go| go.navigate(dir, |col_idx| self.scrolling.column_tile_count(col_idx)));
 
         if let Some((col_idx, new_tile_idx)) = tile_changed {
             // Update grid_overview state only; do not modify the real scrolling layout.
@@ -551,9 +552,21 @@ impl<W: LayoutElement> Workspace<W> {
         self.sync_grid_focus_to_active_window();
     }
 
-    pub fn on_window_added_in_grid(&mut self) {
+    pub fn on_window_added_in_grid(&mut self, id: &W::Id) {
+        if let Some(go) = &mut self.grid_overview {
+            if go.open {
+                go.record_added_window(id.clone());
+            }
+        }
+
         self.recompute_grid_overview_layout();
         self.sync_grid_focus_to_active_window();
+    }
+
+    pub fn grid_window_was_added_while_open(&self, id: &W::Id) -> bool {
+        self.grid_overview
+            .as_ref()
+            .is_some_and(|go| go.open && go.window_was_added_while_open(id))
     }
 
     fn recompute_grid_overview_layout(&mut self) {
@@ -588,9 +601,8 @@ impl<W: LayoutElement> Workspace<W> {
                 }
             })
             .collect();
-        go.column_tile_focus.retain(|(col_idx, _)| {
-            valid_col_indices.contains(col_idx)
-        });
+        go.column_tile_focus
+            .retain(|(col_idx, _)| valid_col_indices.contains(col_idx));
         for col_idx in valid_col_indices {
             let tile_count = self.scrolling.column_tile_count(col_idx);
             if let Some(entry) = go.column_tile_focus.iter_mut().find(|(c, _)| *c == col_idx) {
@@ -716,10 +728,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     #[cfg(test)]
-    pub fn grid_item_renders_on_top_when_grid_closing_for_tests(
-        &self,
-        item: &GridItem<W>,
-    ) -> bool {
+    pub fn grid_item_renders_on_top_when_grid_closing_for_tests(&self, item: &GridItem<W>) -> bool {
         self.grid_item_renders_on_top_when_grid_closing(item)
     }
 
@@ -1089,8 +1098,14 @@ impl<W: LayoutElement> Workspace<W> {
                         }
                     });
 
-                    self.scrolling
-                        .add_tile(grid_col_idx.map(|c| c + 1), tile, activate, width, is_full_width, None);
+                    self.scrolling.add_tile(
+                        grid_col_idx.map(|c| c + 1),
+                        tile,
+                        activate,
+                        width,
+                        is_full_width,
+                        None,
+                    );
 
                     if activate {
                         self.floating_is_active = FloatingActive::No;

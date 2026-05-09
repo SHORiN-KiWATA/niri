@@ -3718,7 +3718,7 @@ fn grid_overview_fill_scale_makes_padding_visual() {
     let bounds_for_padding = |padding| {
         let options = Options {
             grid_overview: niri_config::GridOverview {
-                padding,
+                padding: niri_config::GridOverviewPadding::uniform(padding),
                 ..Default::default()
             },
             ..Default::default()
@@ -4018,7 +4018,58 @@ fn grid_stays_open_when_window_is_added() {
         .active_workspace()
         .and_then(|ws| ws.grid_overview())
         .unwrap();
-    assert!(go.layout.entries.iter().any(|(item, _)| item.window_id() == &2));
+    assert!(go
+        .layout
+        .entries
+        .iter()
+        .any(|(item, _)| item.window_id() == &2));
+}
+
+#[test]
+fn grid_activation_of_newly_added_window_keeps_grid_open() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::ToggleGridOverview,
+    ]);
+
+    layout.add_window(
+        TestWindow::new(TestWindowParams::new(2)),
+        AddWindowTarget::Auto,
+        None,
+        None,
+        false,
+        false,
+        ActivateWindow::No,
+    );
+    layout.verify_invariants();
+
+    assert!(layout.is_grid_overview_open());
+    assert_eq!(layout.grid_focused_window_id(), Some(1));
+
+    layout.activate_window_from_activation(&2);
+    layout.verify_invariants();
+
+    assert!(layout.is_grid_overview_open());
+    assert_eq!(layout.grid_focused_window_id(), Some(2));
+    assert_eq!(layout.focus().map(|window| *window.id()), Some(2));
+}
+
+#[test]
+fn grid_activation_of_existing_window_closes_grid() {
+    let mut layout = three_column_grid_layout(1);
+    check_ops_on_layout(&mut layout, [Op::ToggleGridOverview]);
+
+    assert!(layout.is_grid_overview_open());
+    assert_eq!(layout.grid_focused_window_id(), Some(1));
+
+    layout.activate_window_from_activation(&2);
+    layout.verify_invariants();
+
+    assert!(!layout.is_grid_overview_open());
+    assert_eq!(layout.focus().map(|window| *window.id()), Some(2));
 }
 
 #[test]

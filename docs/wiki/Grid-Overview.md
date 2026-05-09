@@ -23,6 +23,25 @@ grid-overview {
 }
 ```
 
+You can set the padding around the grid with one value for every side, or with separate values for each side:
+
+```kdl
+grid-overview {
+    padding 100
+}
+```
+
+```kdl
+grid-overview {
+    padding {
+        left 64
+        right 64
+        top 48
+        bottom 48
+    }
+}
+```
+
 To change the focused column scale, use the `focused-column-scale` setting:
 
 ```kdl
