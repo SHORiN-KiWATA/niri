@@ -333,7 +333,7 @@ Set the padding around the grid.
 
 ```kdl
 grid-overview {
-    padding 32
+    padding 100
 }
 ```
 

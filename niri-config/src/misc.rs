@@ -270,8 +270,8 @@ pub struct GridOverview {
 impl Default for GridOverview {
     fn default() -> Self {
         Self {
-            gap: 8.,
-            padding: 16.,
+            gap: 16.,
+            padding: 100.,
             min_scale: 0.08,
             focused_window_scale: 1.04,
         }
