@@ -3714,6 +3714,67 @@ fn grid_closing_keeps_all_tabbed_items_visible() {
     // All tabs should be visible during closing (active tab will be rendered on top).
     assert!(scrolling.grid_item_visible_when_closing(&active_item));
     assert!(scrolling.grid_item_visible_when_closing(&inactive_item));
+<<<<<<< HEAD
+=======
+}
+
+#[test]
+fn grid_closing_focused_first_column_focuses_right() {
+    let mut layout = three_column_grid_layout(1);
+    check_ops_on_layout(&mut layout, [Op::ToggleGridOverview]);
+    assert_eq!(layout.grid_focused_window_id(), Some(1));
+
+    check_ops_on_layout(&mut layout, [Op::CloseWindow(1)]);
+
+    assert!(layout.is_grid_overview_open());
+    assert_eq!(layout.grid_focused_window_id(), Some(2));
+}
+
+#[test]
+fn grid_closing_focused_middle_column_focuses_right() {
+    let mut layout = three_column_grid_layout(1);
+    check_ops_on_layout(&mut layout, [Op::ToggleGridOverview]);
+    layout.focus_right();
+    layout.verify_invariants();
+    assert_eq!(layout.grid_focused_window_id(), Some(2));
+
+    check_ops_on_layout(&mut layout, [Op::CloseWindow(2)]);
+
+    assert!(layout.is_grid_overview_open());
+    assert_eq!(layout.grid_focused_window_id(), Some(3));
+}
+
+#[test]
+fn grid_closing_focused_last_column_focuses_left() {
+    let mut layout = three_column_grid_layout(1);
+    check_ops_on_layout(&mut layout, [Op::ToggleGridOverview]);
+    layout.focus_right();
+    layout.verify_invariants();
+    layout.focus_right();
+    layout.verify_invariants();
+    assert_eq!(layout.grid_focused_window_id(), Some(3));
+
+    check_ops_on_layout(&mut layout, [Op::CloseWindow(3)]);
+
+    assert!(layout.is_grid_overview_open());
+    assert_eq!(layout.grid_focused_window_id(), Some(2));
+}
+
+#[test]
+fn grid_closing_nonfocused_column_preserves_grid_focus() {
+    let mut layout = three_column_grid_layout(1);
+    check_ops_on_layout(&mut layout, [Op::ToggleGridOverview]);
+    layout.focus_right();
+    layout.verify_invariants();
+    layout.focus_right();
+    layout.verify_invariants();
+    assert_eq!(layout.grid_focused_window_id(), Some(3));
+
+    check_ops_on_layout(&mut layout, [Op::CloseWindow(2)]);
+
+    assert!(layout.is_grid_overview_open());
+    assert_eq!(layout.grid_focused_window_id(), Some(3));
+>>>>>>> before-review
 }
 
 fn three_column_grid_layout(active: usize) -> Layout<TestWindow> {
