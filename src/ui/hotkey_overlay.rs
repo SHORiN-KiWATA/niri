@@ -281,12 +281,17 @@ fn collect_actions(config: &Config) -> Vec<&Action> {
 
     // Add the spawn actions.
     for bind in binds.iter().filter(|bind| {
+        let has_mod_or_super = bind.key.modifiers.contains(Modifiers::COMPOSITOR)
+            || bind.key.modifiers.contains(Modifiers::SUPER)
+            || matches!(bind.key.trigger, Trigger::Modifier(modifier)
+                if modifier.contains(Modifiers::COMPOSITOR)
+                    || modifier.contains(Modifiers::SUPER));
+
         matches!(bind.action, Action::Spawn(_) | Action::SpawnSh(_))
             // Only show binds with Mod or Super to filter out stuff like volume up/down.
-            && (bind.key.modifiers.contains(Modifiers::COMPOSITOR)
-                || bind.key.modifiers.contains(Modifiers::SUPER))
+            && has_mod_or_super
             // Also filter out wheel and touchpad scroll binds.
-            && matches!(bind.key.trigger, Trigger::Keysym(_))
+            && matches!(bind.key.trigger, Trigger::Keysym(_) | Trigger::Modifier(_))
     }) {
         let action = &bind.action;
 
@@ -562,10 +567,39 @@ fn key_name(screen_reader: bool, mod_key: ModKey, key: &Key) -> String {
         Trigger::TouchpadScrollUp => String::from("Touchpad Scroll Up"),
         Trigger::TouchpadScrollLeft => String::from("Touchpad Scroll Left"),
         Trigger::TouchpadScrollRight => String::from("Touchpad Scroll Right"),
+        Trigger::Modifier(modifier) => modifier_trigger_name(modifier),
     };
     name.push_str(&pretty);
 
     name
+}
+
+fn modifier_trigger_name(modifier: Modifiers) -> String {
+    let mut parts = Vec::new();
+    if modifier.contains(Modifiers::SUPER) {
+        parts.push("Super");
+    }
+    if modifier.contains(Modifiers::CTRL) {
+        parts.push("Ctrl");
+    }
+    if modifier.contains(Modifiers::SHIFT) {
+        parts.push("Shift");
+    }
+    if modifier.contains(Modifiers::ALT) {
+        parts.push("Alt");
+    }
+    if modifier.contains(Modifiers::ISO_LEVEL3_SHIFT) {
+        parts.push("Mod5");
+    }
+    if modifier.contains(Modifiers::ISO_LEVEL5_SHIFT) {
+        parts.push("Mod3");
+    }
+
+    if parts.is_empty() {
+        String::from("Modifier")
+    } else {
+        parts.join(" + ")
+    }
 }
 
 fn prettify_keysym_name(screen_reader: bool, name: &str) -> String {

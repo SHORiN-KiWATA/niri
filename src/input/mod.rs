@@ -77,6 +77,12 @@ pub struct TabletData {
     pub aspect_ratio: f64,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingModifierBind {
+    pub key_code: Keycode,
+    pub bind: Bind,
+}
+
 pub enum PointerOrTouchStartData<D: SeatHandler> {
     Pointer(PointerGrabStartData<D>),
     Touch(TouchGrabStartData<D>),
@@ -148,6 +154,10 @@ impl State {
 
         let hide_exit_confirm_dialog =
             self.niri.exit_confirm_dialog.is_open() && should_hide_exit_confirm_dialog(&event);
+
+        if should_cancel_pending_modifier_bind(&event) {
+            self.niri.pending_modifier_bind = None;
+        }
 
         let mut consumed_by_a11y = false;
         use InputEvent::*;
@@ -446,7 +456,7 @@ impl State {
         #[cfg(not(feature = "dbus"))]
         let _ = consumed_by_a11y;
 
-        let Some(Some(bind)) = self.niri.seat.get_keyboard().unwrap().input(
+        let maybe_bind = self.niri.seat.get_keyboard().unwrap().input(
             self,
             event.key_code(),
             event.state(),
@@ -457,6 +467,13 @@ impl State {
                 let modified = keysym.modified_sym();
                 let raw = keysym.raw_latin_sym_or_raw_current_sym();
                 let modifiers = modifiers_from_state(*mods);
+
+                if pressed {
+                    cancel_pending_modifier_bind_for_key(
+                        &mut this.niri.pending_modifier_bind,
+                        key_code,
+                    );
+                }
 
                 // After updating XKB state from accessibility-grabbed keys, return right away and
                 // don't handle them.
@@ -493,6 +510,39 @@ impl State {
                         return FilterResult::Forward;
                     } else {
                         return FilterResult::Intercept(None);
+                    }
+                }
+
+                if let Some(raw) = raw {
+                    if pressed && modifier_from_keysym(raw).is_some() {
+                        let config = this.niri.config.borrow();
+                        let bindings =
+                            make_binds_iter(&config, &mut this.niri.window_mru_ui, modifiers)
+                                .cloned()
+                                .collect::<Vec<_>>();
+                        maybe_start_pending_modifier_bind(
+                            &mut this.niri.pending_modifier_bind,
+                            bindings.iter(),
+                            mod_key,
+                            key_code,
+                            raw,
+                            *mods,
+                            &this.niri.screenshot_ui,
+                            is_inhibiting_shortcuts,
+                        );
+                    } else if !pressed
+                        && this
+                            .niri
+                            .pending_modifier_bind
+                            .as_ref()
+                            .is_some_and(|pending| pending.key_code == key_code)
+                    {
+                        finish_pending_modifier_bind(
+                            &mut this.niri.pending_modifier_bind,
+                            &mut this.niri.completed_modifier_bind,
+                            key_code,
+                            is_inhibiting_shortcuts,
+                        );
                     }
                 }
 
@@ -593,7 +643,14 @@ impl State {
 
                 res
             },
-        ) else {
+        );
+
+        if let Some(bind) = self.niri.completed_modifier_bind.take() {
+            self.handle_bind(bind);
+            return;
+        }
+
+        let Some(Some(bind)) = maybe_bind else {
             return;
         };
 
@@ -4682,6 +4739,128 @@ fn find_configured_bind<'a>(
     None
 }
 
+#[allow(clippy::too_many_arguments)]
+fn maybe_start_pending_modifier_bind<'a>(
+    pending_modifier_bind: &mut Option<PendingModifierBind>,
+    bindings: impl IntoIterator<Item = &'a Bind>,
+    mod_key: ModKey,
+    key_code: Keycode,
+    raw: Keysym,
+    mods: ModifiersState,
+    screenshot_ui: &ScreenshotUi,
+    is_inhibiting_shortcuts: bool,
+) {
+    let Some(modifier) = modifier_from_keysym(raw) else {
+        return;
+    };
+
+    let Some(bind) = find_standalone_modifier_bind(bindings, mod_key, modifier, mods) else {
+        return;
+    };
+
+    if screenshot_ui.is_open() && !allowed_during_screenshot(&bind.action) {
+        return;
+    }
+
+    if is_inhibiting_shortcuts && bind.allow_inhibiting {
+        return;
+    }
+
+    *pending_modifier_bind = Some(PendingModifierBind { key_code, bind });
+}
+
+fn finish_pending_modifier_bind(
+    pending_modifier_bind: &mut Option<PendingModifierBind>,
+    completed_modifier_bind: &mut Option<Bind>,
+    key_code: Keycode,
+    is_inhibiting_shortcuts: bool,
+) {
+    let Some(pending) = pending_modifier_bind.take() else {
+        return;
+    };
+
+    if pending.key_code != key_code {
+        *pending_modifier_bind = Some(pending);
+        return;
+    }
+
+    if is_inhibiting_shortcuts && pending.bind.allow_inhibiting {
+        return;
+    }
+
+    *completed_modifier_bind = Some(pending.bind);
+}
+
+fn cancel_pending_modifier_bind_for_key(
+    pending_modifier_bind: &mut Option<PendingModifierBind>,
+    key_code: Keycode,
+) {
+    if pending_modifier_bind
+        .as_ref()
+        .is_some_and(|pending| pending.key_code != key_code)
+    {
+        *pending_modifier_bind = None;
+    }
+}
+
+fn find_standalone_modifier_bind<'a>(
+    bindings: impl IntoIterator<Item = &'a Bind>,
+    mod_key: ModKey,
+    modifier: Modifiers,
+    mods: ModifiersState,
+) -> Option<Bind> {
+    let mut modifiers = modifiers_from_state(mods);
+    modifiers.remove(modifier);
+
+    let compositor_modifier = mod_key.to_modifiers();
+    if modifiers.contains(compositor_modifier) {
+        modifiers |= Modifiers::COMPOSITOR;
+    }
+
+    for bind in bindings {
+        let Trigger::Modifier(trigger) = bind.key.trigger else {
+            continue;
+        };
+        if !modifier_trigger_matches(trigger, mod_key, modifier) {
+            continue;
+        }
+
+        let mut bind_modifiers = bind.key.modifiers;
+        if bind_modifiers.contains(Modifiers::COMPOSITOR) {
+            bind_modifiers |= compositor_modifier;
+        } else if bind_modifiers.contains(compositor_modifier) {
+            bind_modifiers |= Modifiers::COMPOSITOR;
+        }
+
+        if bind_modifiers == modifiers {
+            return Some(bind.clone());
+        }
+    }
+
+    None
+}
+
+fn modifier_trigger_matches(trigger: Modifiers, mod_key: ModKey, modifier: Modifiers) -> bool {
+    if trigger == Modifiers::COMPOSITOR {
+        modifier == mod_key.to_modifiers()
+    } else {
+        trigger == modifier
+    }
+}
+
+fn modifier_from_keysym(keysym: Keysym) -> Option<Modifiers> {
+    #[allow(non_upper_case_globals)]
+    match keysym.raw() {
+        keysyms::KEY_Shift_L | keysyms::KEY_Shift_R => Some(Modifiers::SHIFT),
+        keysyms::KEY_Control_L | keysyms::KEY_Control_R => Some(Modifiers::CTRL),
+        keysyms::KEY_Alt_L | keysyms::KEY_Alt_R => Some(Modifiers::ALT),
+        keysyms::KEY_Super_L | keysyms::KEY_Super_R => Some(Modifiers::SUPER),
+        keysyms::KEY_ISO_Level3_Shift => Some(Modifiers::ISO_LEVEL3_SHIFT),
+        keysyms::KEY_ISO_Level5_Shift => Some(Modifiers::ISO_LEVEL5_SHIFT),
+        _ => None,
+    }
+}
+
 fn find_configured_switch_action(
     bindings: &SwitchBinds,
     switch: Switch,
@@ -4769,6 +4948,23 @@ fn should_hide_exit_confirm_dialog<I: InputBackend>(event: &InputEvent<I>) -> bo
         | InputEvent::TouchMotion { .. }
         | InputEvent::TabletToolTip { .. }
         | InputEvent::TabletToolButton { .. } => true,
+        _ => false,
+    }
+}
+
+fn should_cancel_pending_modifier_bind<I: InputBackend>(event: &InputEvent<I>) -> bool {
+    match event {
+        InputEvent::PointerButton { event } => event.state() == ButtonState::Pressed,
+        InputEvent::PointerAxis { .. }
+        | InputEvent::GestureSwipeBegin { .. }
+        | InputEvent::GesturePinchBegin { .. }
+        | InputEvent::GestureHoldBegin { .. }
+        | InputEvent::TouchDown { .. }
+        | InputEvent::TouchMotion { .. }
+        | InputEvent::TouchUp { .. }
+        | InputEvent::TouchCancel { .. }
+        | InputEvent::TabletToolButton { .. } => true,
+        InputEvent::TabletToolTip { event } => event.tip_state() == TabletToolTipState::Down,
         _ => false,
     }
 }
@@ -5476,6 +5672,93 @@ mod tests {
         let filter = close_key_event(&mut suppressed_keys, mods, false);
         assert!(matches!(filter, FilterResult::Intercept(None)));
         assert!(suppressed_keys.is_empty());
+    }
+
+    #[test]
+    fn standalone_modifier_bind_forwarded_then_completed() {
+        let bind = Bind {
+            key: Key {
+                trigger: Trigger::Modifier(Modifiers::SUPER),
+                modifiers: Modifiers::empty(),
+            },
+            action: Action::CloseWindow,
+            repeat: true,
+            cooldown: None,
+            allow_when_locked: false,
+            allow_inhibiting: true,
+            hotkey_overlay_title: None,
+        };
+        let bindings = Binds(vec![bind.clone()]);
+
+        let mut pending_modifier_bind = None;
+        let mut completed_modifier_bind = None;
+        let mut suppressed_keys = HashSet::new();
+        let screenshot_ui = ScreenshotUi::new(Clock::default(), Default::default());
+        let key_code = Keycode::from(Keysym::Super_L.raw() + 8);
+        let mods = ModifiersState {
+            logo: true,
+            ..Default::default()
+        };
+
+        maybe_start_pending_modifier_bind(
+            &mut pending_modifier_bind,
+            &bindings.0,
+            ModKey::Super,
+            key_code,
+            Keysym::Super_L,
+            mods,
+            &screenshot_ui,
+            false,
+        );
+
+        assert_eq!(
+            pending_modifier_bind,
+            Some(PendingModifierBind {
+                key_code,
+                bind: bind.clone(),
+            })
+        );
+
+        let filter = should_intercept_key(
+            &mut suppressed_keys,
+            &bindings.0,
+            ModKey::Super,
+            key_code,
+            Keysym::Super_L,
+            Some(Keysym::Super_L),
+            true,
+            mods,
+            &screenshot_ui,
+            false,
+            false,
+        );
+        assert!(matches!(filter, FilterResult::Forward));
+        assert!(suppressed_keys.is_empty());
+
+        finish_pending_modifier_bind(
+            &mut pending_modifier_bind,
+            &mut completed_modifier_bind,
+            key_code,
+            false,
+        );
+
+        let filter = should_intercept_key(
+            &mut suppressed_keys,
+            &bindings.0,
+            ModKey::Super,
+            key_code,
+            Keysym::Super_L,
+            Some(Keysym::Super_L),
+            false,
+            ModifiersState::default(),
+            &screenshot_ui,
+            false,
+            false,
+        );
+        assert!(matches!(filter, FilterResult::Forward));
+        assert!(suppressed_keys.is_empty());
+        assert!(pending_modifier_bind.is_none());
+        assert_eq!(completed_modifier_bind, Some(bind));
     }
 
     #[test]
