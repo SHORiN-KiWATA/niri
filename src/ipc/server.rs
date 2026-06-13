@@ -9,6 +9,7 @@ use std::{env, io, process};
 
 use anyhow::Context;
 use async_channel::{Receiver, Sender, TrySendError};
+use base64::Engine as _;
 use calloop::futures::Scheduler;
 use calloop::io::Async;
 use directories::BaseDirs;
@@ -381,6 +382,10 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
         Request::Action(action) => {
             validate_action(&action)?;
 
+            if action_writes_screenshot_to_stdout(&action) {
+                return process_screenshot_stdout(ctx, action).await;
+            }
+
             let (tx, rx) = async_channel::bounded(1);
 
             let action = niri_config::Action::from(action);
@@ -458,6 +463,31 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
     };
 
     Ok(response)
+}
+
+async fn process_screenshot_stdout(ctx: &ClientCtx, action: Action) -> Reply {
+    let (tx, rx) = async_channel::bounded(1);
+
+    ctx.event_loop.insert_idle(move |state| {
+        state.screenshot_for_ipc_stdout(action, tx);
+    });
+
+    let png = rx
+        .recv()
+        .await
+        .map_err(|_| String::from("error taking screenshot"))??;
+    let png_base64 = base64::engine::general_purpose::STANDARD.encode(&*png);
+
+    Ok(Response::Screenshot { png_base64 })
+}
+
+fn action_writes_screenshot_to_stdout(action: &Action) -> bool {
+    matches!(
+        action,
+        Action::Screenshot { stdout: true, .. }
+            | Action::ScreenshotScreen { stdout: true, .. }
+            | Action::ScreenshotWindow { stdout: true, .. }
+    )
 }
 
 fn validate_action(action: &Action) -> Result<(), String> {

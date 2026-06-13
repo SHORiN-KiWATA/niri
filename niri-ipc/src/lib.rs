@@ -165,6 +165,11 @@ pub enum Response {
     OverviewState(Overview),
     /// Information about screencasts.
     Casts(Vec<Cast>),
+    /// PNG screenshot data.
+    Screenshot {
+        /// Base64-encoded PNG image data.
+        png_base64: String,
+    },
 }
 
 /// Overview information.
@@ -226,6 +231,11 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(short = 'p', long, action = clap::ArgAction::Set, default_value_t = true))]
         show_pointer: bool,
 
+        /// Write the screenshot PNG to stdout.
+        #[serde(default)]
+        #[cfg_attr(feature = "clap", arg(long))]
+        stdout: bool,
+
         /// Path to save the screenshot to.
         ///
         /// The path must be absolute, otherwise an error is returned.
@@ -245,6 +255,11 @@ pub enum Action {
         /// Whether to include the mouse pointer in the screenshot.
         #[cfg_attr(feature = "clap", arg(short = 'p', long, action = clap::ArgAction::Set, default_value_t = true))]
         show_pointer: bool,
+
+        /// Write the screenshot PNG to stdout.
+        #[serde(default)]
+        #[cfg_attr(feature = "clap", arg(long))]
+        stdout: bool,
 
         /// Path to save the screenshot to.
         ///
@@ -274,6 +289,11 @@ pub enum Action {
         /// (usually this means the pointer is on top of the window).
         #[cfg_attr(feature = "clap", arg(short = 'p', long, action = clap::ArgAction::Set, default_value_t = false))]
         show_pointer: bool,
+
+        /// Write the screenshot PNG to stdout.
+        #[serde(default)]
+        #[cfg_attr(feature = "clap", arg(long))]
+        stdout: bool,
 
         /// Path to save the screenshot to.
         ///
@@ -2119,5 +2139,18 @@ mod tests {
         );
         assert!("-".parse::<PositionChange>().is_err());
         assert!("10% ".parse::<PositionChange>().is_err());
+    }
+
+    #[test]
+    fn screenshot_stdout_defaults_to_false() {
+        let action: Action = serde_json::from_str(
+            r#"{"ScreenshotScreen":{"write_to_disk":false,"show_pointer":true,"path":null}}"#,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            action,
+            Action::ScreenshotScreen { stdout: false, .. }
+        ));
     }
 }

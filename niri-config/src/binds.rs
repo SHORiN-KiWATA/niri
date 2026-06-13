@@ -407,25 +407,28 @@ impl From<niri_ipc::Action> for Action {
             niri_ipc::Action::Spawn { command } => Self::Spawn(command),
             niri_ipc::Action::SpawnSh { command } => Self::SpawnSh(command),
             niri_ipc::Action::DoScreenTransition { delay_ms } => Self::DoScreenTransition(delay_ms),
-            niri_ipc::Action::Screenshot { show_pointer, path } => {
-                Self::Screenshot(show_pointer, path)
-            }
+            niri_ipc::Action::Screenshot {
+                show_pointer, path, ..
+            } => Self::Screenshot(show_pointer, path),
             niri_ipc::Action::ScreenshotScreen {
                 write_to_disk,
                 show_pointer,
                 path,
+                ..
             } => Self::ScreenshotScreen(write_to_disk, show_pointer, path),
             niri_ipc::Action::ScreenshotWindow {
                 id: None,
                 write_to_disk,
                 show_pointer,
                 path,
+                ..
             } => Self::ScreenshotWindow(write_to_disk, show_pointer, path),
             niri_ipc::Action::ScreenshotWindow {
                 id: Some(id),
                 write_to_disk,
                 show_pointer,
                 path,
+                ..
             } => Self::ScreenshotWindowById {
                 id,
                 write_to_disk,

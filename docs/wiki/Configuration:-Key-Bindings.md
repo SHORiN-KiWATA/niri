@@ -369,6 +369,10 @@ binds {
 
 In the interactive screenshot UI, pressing <kbd>Ctrl</kbd><kbd>C</kbd> will copy the screenshot to the clipboard without writing it to disk.
 
+When using these actions through `niri msg`, you can also pass `--stdout` to pipe the PNG data to another program.
+This is an IPC/CLI option, not a key binding property.
+See [Screenshots To Stdout](./IPC.md#screenshots-to-stdout).
+
 <sup>Since: 25.05</sup> You can hide the mouse pointer in screenshots with the `show-pointer=false` property:
 
 ```kdl
