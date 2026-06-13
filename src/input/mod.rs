@@ -3206,11 +3206,20 @@ impl State {
                 && !pointer.is_grabbed()
                 && !self.niri.screenshot_ui.is_open()
             {
-                let location = pointer.current_location();
-                let over_layer_shell = self.niri.contents_under(location).layer.is_some();
-                if !over_layer_shell {
-                    self.niri.layout.close_grid_overview();
+                let output_under_cursor = self.niri.output_under_cursor();
+                let active_output = self.niri.layout.active_output().cloned();
+                if let Some(output) =
+                    output_under_cursor.filter(|output| active_output.as_ref() != Some(output))
+                {
+                    self.niri.layout.focus_output(&output);
                     self.niri.queue_redraw_all();
+                } else {
+                    let location = pointer.current_location();
+                    let over_layer_shell = self.niri.contents_under(location).layer.is_some();
+                    if !over_layer_shell {
+                        self.niri.layout.close_grid_overview();
+                        self.niri.queue_redraw_all();
+                    }
                 }
             } else if let Some((output, ws)) = is_overview_open
                 .then(|| self.niri.workspace_under_cursor(false))
