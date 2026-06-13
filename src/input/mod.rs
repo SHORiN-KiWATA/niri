@@ -3069,14 +3069,27 @@ impl State {
             if let Some(mapped) = self.niri.window_under_cursor() {
                 let window = mapped.window.clone();
 
-                // In grid overview, left-click activates window and exits.
-                if self.niri.layout.is_grid_overview_open()
+                // In grid overview, left-click can either confirm on release or start a move.
+                if self.niri.layout.window_is_in_open_grid_overview(&window)
                     && button == Some(MouseButton::Left)
                     && !pointer.is_grabbed()
                 {
-                    self.niri.layout.confirm_grid_selection_for_window(&window);
-                    self.niri.suppressed_keys.clear();
-                    self.niri.queue_redraw_all();
+                    let location = pointer.current_location();
+                    let start_data = PointerGrabStartData {
+                        focus: None,
+                        button: button_code,
+                        location,
+                    };
+                    let start_data = PointerOrTouchStartData::Pointer(start_data);
+                    let icon = CursorIcon::Grabbing;
+                    if let Some(grab) =
+                        MoveGrab::new(self, start_data, window.clone(), false, Some(icon))
+                    {
+                        pointer.set_grab(self, grab, serial, Focus::Clear);
+                        self.niri
+                            .cursor_manager
+                            .set_cursor_image(CursorImageStatus::Named(icon));
+                    }
                     return;
                 }
 
@@ -3191,6 +3204,7 @@ impl State {
             } else if self.niri.layout.is_grid_overview_open()
                 && button == Some(MouseButton::Left)
                 && !pointer.is_grabbed()
+                && !self.niri.screenshot_ui.is_open()
             {
                 let location = pointer.current_location();
                 let over_layer_shell = self.niri.contents_under(location).layer.is_some();

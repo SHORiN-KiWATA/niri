@@ -3814,7 +3814,7 @@ fn grid_overview_floating_uses_blended_tiling_scale_when_mixed() {
 }
 
 #[test]
-fn grid_overview_does_not_upscale_single_floating_window() {
+fn grid_overview_allows_single_floating_window_to_use_independent_scale() {
     let mut floating = TestWindowParams::new(1);
     floating.is_floating = true;
 
@@ -3830,21 +3830,12 @@ fn grid_overview_does_not_upscale_single_floating_window() {
         .unwrap();
     let (item, info) = go.layout.entries.first().unwrap();
 
-    assert!(
-        info.target_scale <= 1.,
-        "floating grid preview should not upscale: target_scale={}",
-        info.target_scale
-    );
-    assert!(
-        info.target_scale * go.entry_focus_boost(item, info) <= 1.,
-        "focused floating grid preview should not visually upscale: target_scale={}, boost={}",
-        info.target_scale,
-        go.entry_focus_boost(item, info)
-    );
+    assert!(info.target_scale > 1.);
+    assert!(go.entry_focus_boost(item, info) > 1.);
 }
 
 #[test]
-fn grid_overview_does_not_upscale_mixed_floating_window() {
+fn grid_overview_allows_mixed_floating_window_to_use_blended_scale() {
     let mut floating = TestWindowParams::new(2);
     floating.is_floating = true;
 
@@ -3869,17 +3860,8 @@ fn grid_overview_does_not_upscale_mixed_floating_window() {
         .find(|(item, _)| item.window_id() == &2)
         .unwrap();
 
-    assert!(
-        info.target_scale <= 1.,
-        "mixed floating grid preview should not upscale: target_scale={}",
-        info.target_scale
-    );
-    assert!(
-        info.target_scale * go.entry_focus_boost(item, info) <= 1.,
-        "focused mixed floating grid preview should not visually upscale: target_scale={}, boost={}",
-        info.target_scale,
-        go.entry_focus_boost(item, info)
-    );
+    assert!(info.target_scale > 1.);
+    assert!(go.entry_focus_boost(item, info) > 1.);
 }
 
 #[test]
@@ -3994,6 +3976,47 @@ fn grid_confirming_column_tile_updates_grid_tile_focus_before_close_finishes() {
 
     assert_eq!(go.focused_id(), Some(2));
     assert_eq!(go.get_column_tile_focus(col_idx), tile_idx);
+}
+
+#[test]
+fn grid_expel_from_column_focuses_previous_tile_when_focused_tile_is_expelled() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::ConsumeOrExpelWindowLeft { id: None },
+        Op::AddWindow {
+            params: TestWindowParams::new(3),
+        },
+        Op::ConsumeOrExpelWindowLeft { id: None },
+        Op::FocusWindow(1),
+        Op::ToggleGridOverview,
+        Op::CompleteAnimations,
+    ]);
+    assert_eq!(scrolling_column_ids(&layout), vec![vec![1, 2, 3]]);
+    assert!(layout
+        .active_workspace_mut()
+        .unwrap()
+        .set_grid_focus_for_window(&3));
+
+    layout.expel_from_column();
+    layout.verify_invariants();
+
+    assert_eq!(scrolling_column_ids(&layout), vec![vec![1, 2], vec![3]]);
+    assert_eq!(layout.grid_focused_window_id(), Some(2));
+    assert_eq!(
+        layout
+            .active_workspace()
+            .unwrap()
+            .grid_overview()
+            .unwrap()
+            .focused_id(),
+        Some(2)
+    );
 }
 
 #[test]
@@ -4341,6 +4364,843 @@ fn two_column_grid_focused_on_second() -> Layout<TestWindow> {
     );
 
     layout
+}
+
+fn tabbed_column_and_column_grid() -> Layout<TestWindow> {
+    check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::ConsumeOrExpelWindowLeft { id: None },
+        Op::ToggleColumnTabbedDisplay,
+        Op::AddWindow {
+            params: TestWindowParams::new(3),
+        },
+        Op::ToggleGridOverview,
+    ])
+}
+
+fn large_grid_layout() -> Layout<TestWindow> {
+    let mut ops = vec![Op::AddOutput(1)];
+    for id in 1..=3 {
+        let mut params = TestWindowParams::new(id);
+        params.bbox = Rectangle::from_size(Size::from((1600, 1200)));
+        ops.push(Op::AddWindow { params });
+    }
+    ops.push(Op::FocusWindow(1));
+    ops.push(Op::ToggleGridOverview);
+    check_ops(ops)
+}
+
+fn scrolling_column_ids(layout: &Layout<TestWindow>) -> Vec<Vec<usize>> {
+    layout
+        .active_workspace()
+        .unwrap()
+        .scrolling()
+        .columns()
+        .map(|col| col.tiles().map(|(tile, _)| *tile.window().id()).collect())
+        .collect()
+}
+
+fn grid_window_point(
+    layout: &Layout<TestWindow>,
+    window: usize,
+    x_frac: f64,
+    y_frac: f64,
+) -> (Output, Point<f64, Logical>, f64) {
+    let MonitorSet::Normal { monitors, .. } = &layout.monitor_set else {
+        unreachable!()
+    };
+
+    let mon = &monitors[0];
+    let (ws, geo) = mon
+        .workspaces_with_render_geo()
+        .find(|(ws, _)| ws.has_window(&window))
+        .unwrap();
+    let (tile_pos, scale) = ws.grid_window_visual_transform(&window).unwrap();
+    let tile_size = ws
+        .tiles_with_render_positions()
+        .find(|(tile, _, _)| tile.window().id() == &window)
+        .map(|(tile, _, _)| tile.tile_size())
+        .unwrap();
+    let offset = Point::from((tile_size.w * scale * x_frac, tile_size.h * scale * y_frac));
+
+    (mon.output.clone(), geo.loc + tile_pos + offset, scale)
+}
+
+fn grid_window_visual_rect(layout: &Layout<TestWindow>, window: usize) -> Rectangle<f64, Logical> {
+    let ws = layout.active_workspace().unwrap();
+    let (tile_pos, scale) = ws.grid_window_visual_transform(&window).unwrap();
+    let tile_size = ws
+        .tiles_with_render_positions()
+        .find(|(tile, _, _)| tile.window().id() == &window)
+        .map(|(tile, _, _)| tile.tile_size())
+        .unwrap();
+
+    Rectangle::new(tile_pos, tile_size.upscale(scale))
+}
+
+fn grid_entry_target_size(layout: &Layout<TestWindow>, window: usize) -> Size<f64, Logical> {
+    layout
+        .active_workspace()
+        .unwrap()
+        .grid_overview()
+        .unwrap()
+        .layout
+        .entries
+        .iter()
+        .find_map(|(item, info)| (item.window_id() == &window).then_some(info.target_size))
+        .unwrap()
+}
+
+fn grid_rearrange_anim_value(layout: &Layout<TestWindow>) -> f64 {
+    layout
+        .active_workspace()
+        .unwrap()
+        .grid_overview()
+        .unwrap()
+        .rearrange_anim
+        .as_ref()
+        .unwrap()
+        .value()
+}
+
+fn grid_has_rearrange_anim(layout: &Layout<TestWindow>) -> bool {
+    layout
+        .active_workspace()
+        .unwrap()
+        .grid_overview()
+        .unwrap()
+        .rearrange_anim
+        .is_some()
+}
+
+#[test]
+fn grid_move_column_moves_tabbed_column_as_group() {
+    let mut layout = tabbed_column_and_column_grid();
+    assert!(layout
+        .active_workspace_mut()
+        .unwrap()
+        .set_grid_focus_for_window(&1));
+
+    layout.move_right();
+    layout.verify_invariants();
+
+    assert_eq!(scrolling_column_ids(&layout), vec![vec![3], vec![1, 2]]);
+    assert!(layout.is_grid_overview_open());
+    assert_eq!(layout.grid_focused_window_id(), Some(1));
+}
+
+#[test]
+fn grid_move_column_keeps_focus_boost_stationary() {
+    let mut layout = tabbed_column_and_column_grid();
+    assert!(layout
+        .active_workspace_mut()
+        .unwrap()
+        .set_grid_focus_for_window(&1));
+    check_ops_on_layout(&mut layout, [Op::CompleteAnimations]);
+
+    layout.move_right();
+    layout.verify_invariants();
+
+    let go = layout
+        .active_workspace()
+        .and_then(|ws| ws.grid_overview())
+        .unwrap();
+    let (focused_item, focused_info) = go
+        .layout
+        .entries
+        .iter()
+        .find(|(item, _)| item.window_id() == &1)
+        .unwrap();
+    let (swapped_item, swapped_info) = go
+        .layout
+        .entries
+        .iter()
+        .find(|(item, _)| item.window_id() == &3)
+        .unwrap();
+
+    assert_eq!(go.focused_id(), Some(1));
+    assert!(go.focus_boost_anim.is_none());
+    assert!(go.entry_focus_boost(focused_item, focused_info) > 1.);
+    approx::assert_abs_diff_eq!(go.entry_focus_boost(swapped_item, swapped_info), 1.);
+}
+
+#[test]
+fn grid_move_window_down_reorders_focused_tab_only() {
+    let mut layout = tabbed_column_and_column_grid();
+    assert!(layout
+        .active_workspace_mut()
+        .unwrap()
+        .set_grid_focus_for_window(&1));
+
+    layout.move_down();
+    layout.verify_invariants();
+
+    assert_eq!(scrolling_column_ids(&layout), vec![vec![2, 1], vec![3]]);
+    assert!(layout.is_grid_overview_open());
+    assert_eq!(layout.grid_focused_window_id(), Some(1));
+}
+
+#[test]
+fn grid_move_window_up_reorders_focused_column_tile() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::ConsumeOrExpelWindowLeft { id: None },
+        Op::FocusWindow(1),
+        Op::ToggleGridOverview,
+    ]);
+
+    layout.focus_down();
+    layout.verify_invariants();
+    assert_eq!(layout.grid_focused_window_id(), Some(2));
+
+    layout.move_up();
+    layout.verify_invariants();
+
+    assert_eq!(scrolling_column_ids(&layout), vec![vec![2, 1]]);
+    assert!(layout.is_grid_overview_open());
+    assert_eq!(layout.grid_focused_window_id(), Some(2));
+}
+
+#[test]
+fn grid_move_window_up_preserves_tile_move_animation() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::ConsumeOrExpelWindowLeft { id: None },
+        Op::FocusWindow(1),
+        Op::ToggleGridOverview,
+    ]);
+
+    layout.focus_down();
+    layout.verify_invariants();
+    let item = layout
+        .active_workspace()
+        .unwrap()
+        .scrolling()
+        .grid_item_for_window(&2)
+        .unwrap();
+    let before_origin = layout
+        .active_workspace()
+        .unwrap()
+        .scrolling()
+        .grid_preview_with_stable_origin(&item)
+        .unwrap()
+        .normal_pos;
+
+    layout.move_up();
+    layout.verify_invariants();
+    check_ops_on_layout(&mut layout, [Op::AdvanceAnimations { msec_delta: 50 }]);
+
+    let has_vertical_move_animation = layout
+        .active_workspace()
+        .unwrap()
+        .scrolling()
+        .columns()
+        .flat_map(|col| col.tiles())
+        .any(|(tile, _)| tile.render_offset().y.abs() > 0.001);
+    assert!(has_vertical_move_animation);
+
+    let item = layout
+        .active_workspace()
+        .unwrap()
+        .scrolling()
+        .grid_item_for_window(&2)
+        .unwrap();
+    let after_origin = layout
+        .active_workspace()
+        .unwrap()
+        .scrolling()
+        .grid_preview_with_stable_origin(&item)
+        .unwrap()
+        .normal_pos;
+    approx::assert_abs_diff_eq!(after_origin.x, before_origin.x, epsilon = 0.001);
+    approx::assert_abs_diff_eq!(after_origin.y, before_origin.y, epsilon = 0.001);
+}
+
+#[test]
+fn grid_focus_window_down_or_output_navigates_focused_column_tile() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddOutput(2),
+        Op::FocusOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::ConsumeOrExpelWindowLeft { id: None },
+        Op::FocusWindow(1),
+        Op::ToggleGridOverview,
+    ]);
+    let output = layout
+        .outputs()
+        .find(|output| output.name() == "output2")
+        .cloned()
+        .unwrap();
+
+    assert!(layout.is_grid_overview_open());
+    assert_eq!(layout.grid_focused_window_id(), Some(1));
+    assert_eq!(
+        layout
+            .active_workspace()
+            .and_then(|ws| ws.active_window())
+            .map(|window| *window.id()),
+        Some(1)
+    );
+
+    assert!(!layout.focus_window_down_or_output(&output));
+    layout.verify_invariants();
+
+    assert!(layout.is_grid_overview_open());
+    assert_eq!(layout.grid_focused_window_id(), Some(2));
+    assert_eq!(
+        layout
+            .active_workspace()
+            .and_then(|ws| ws.active_window())
+            .map(|window| *window.id()),
+        Some(1)
+    );
+
+    assert!(!layout.focus_window_up_or_output(&output));
+    layout.verify_invariants();
+
+    assert_eq!(layout.grid_focused_window_id(), Some(1));
+    assert_eq!(
+        layout
+            .active_workspace()
+            .and_then(|ws| ws.active_window())
+            .map(|window| *window.id()),
+        Some(1)
+    );
+}
+
+#[test]
+fn grid_toggle_column_tabbed_display_refreshes_grid_items() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::ConsumeOrExpelWindowLeft { id: None },
+        Op::FocusWindow(1),
+        Op::ToggleGridOverview,
+    ]);
+
+    layout.toggle_column_tabbed_display();
+    layout.verify_invariants();
+
+    let ws = layout.active_workspace().unwrap();
+    let go = ws.grid_overview().unwrap();
+    assert!(go.layout.entries.iter().any(|(item, _)| matches!(
+        item,
+        super::grid_overview::GridItem::Tab { window_id, .. } if window_id == &1
+    )));
+    assert!(go.layout.entries.iter().any(|(item, _)| matches!(
+        item,
+        super::grid_overview::GridItem::Tab { window_id, .. } if window_id == &2
+    )));
+    assert!(ws.grid_window_visual_transform(&1).is_some());
+    assert!(ws.grid_window_visual_transform(&2).is_some());
+}
+
+#[test]
+fn grid_column_to_tabs_starts_windows_from_previous_visual_positions() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::ConsumeOrExpelWindowLeft { id: None },
+        Op::FocusWindow(1),
+        Op::ToggleGridOverview,
+        Op::CompleteAnimations,
+    ]);
+    let before_2 = layout
+        .active_workspace()
+        .unwrap()
+        .grid_window_visual_transform(&2)
+        .unwrap();
+
+    layout.toggle_column_tabbed_display();
+    layout.verify_invariants();
+
+    let after_2 = layout
+        .active_workspace()
+        .unwrap()
+        .grid_window_visual_transform(&2)
+        .unwrap();
+    approx::assert_abs_diff_eq!(after_2.0.x, before_2.0.x, epsilon = 0.001);
+    approx::assert_abs_diff_eq!(after_2.0.y, before_2.0.y, epsilon = 0.001);
+    approx::assert_abs_diff_eq!(after_2.1, before_2.1, epsilon = 0.001);
+}
+
+#[test]
+fn grid_tabs_to_column_starts_windows_from_previous_visual_positions() {
+    let mut layout = tabbed_column_and_column_grid();
+    assert!(layout
+        .active_workspace_mut()
+        .unwrap()
+        .set_grid_focus_for_window(&1));
+    check_ops_on_layout(&mut layout, [Op::CompleteAnimations]);
+    let before_1 = layout
+        .active_workspace()
+        .unwrap()
+        .grid_window_visual_transform(&1)
+        .unwrap();
+    let before_2 = layout
+        .active_workspace()
+        .unwrap()
+        .grid_window_visual_transform(&2)
+        .unwrap();
+
+    layout.set_column_display(ColumnDisplay::Normal);
+    layout.verify_invariants();
+
+    let after_1 = layout
+        .active_workspace()
+        .unwrap()
+        .grid_window_visual_transform(&1)
+        .unwrap();
+    let after_2 = layout
+        .active_workspace()
+        .unwrap()
+        .grid_window_visual_transform(&2)
+        .unwrap();
+    approx::assert_abs_diff_eq!(after_1.0.x, before_1.0.x, epsilon = 0.001);
+    approx::assert_abs_diff_eq!(after_1.0.y, before_1.0.y, epsilon = 0.001);
+    approx::assert_abs_diff_eq!(after_1.1, before_1.1, epsilon = 0.001);
+    approx::assert_abs_diff_eq!(after_2.0.x, before_2.0.x, epsilon = 0.001);
+    approx::assert_abs_diff_eq!(after_2.0.y, before_2.0.y, epsilon = 0.001);
+    approx::assert_abs_diff_eq!(after_2.1, before_2.1, epsilon = 0.001);
+}
+
+#[test]
+fn grid_merge_starts_windows_from_previous_visual_positions() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::FocusWindow(1),
+        Op::ToggleGridOverview,
+        Op::CompleteAnimations,
+    ]);
+    assert!(layout
+        .active_workspace_mut()
+        .unwrap()
+        .set_grid_focus_for_window(&2));
+    let before_1 = layout
+        .active_workspace()
+        .unwrap()
+        .grid_window_visual_transform(&1)
+        .unwrap();
+    let before_2 = layout
+        .active_workspace()
+        .unwrap()
+        .grid_window_visual_transform(&2)
+        .unwrap();
+
+    layout.consume_or_expel_window_left(None);
+    layout.verify_invariants();
+
+    let after_1 = layout
+        .active_workspace()
+        .unwrap()
+        .grid_window_visual_transform(&1)
+        .unwrap();
+    let after_2 = layout
+        .active_workspace()
+        .unwrap()
+        .grid_window_visual_transform(&2)
+        .unwrap();
+    approx::assert_abs_diff_eq!(after_1.0.x, before_1.0.x, epsilon = 0.001);
+    approx::assert_abs_diff_eq!(after_1.0.y, before_1.0.y, epsilon = 0.001);
+    approx::assert_abs_diff_eq!(after_1.1, before_1.1, epsilon = 0.001);
+    approx::assert_abs_diff_eq!(after_2.0.x, before_2.0.x, epsilon = 0.001);
+    approx::assert_abs_diff_eq!(after_2.0.y, before_2.0.y, epsilon = 0.001);
+    approx::assert_abs_diff_eq!(after_2.1, before_2.1, epsilon = 0.001);
+}
+
+#[test]
+fn grid_action_snapshots_visuals_before_activating_grid_focus() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::FocusWindow(1),
+        Op::ToggleGridOverview,
+        Op::CompleteAnimations,
+    ]);
+    assert_eq!(
+        layout
+            .active_workspace()
+            .unwrap()
+            .active_window()
+            .unwrap()
+            .id(),
+        &1
+    );
+    assert!(layout
+        .active_workspace_mut()
+        .unwrap()
+        .set_grid_focus_for_window(&2));
+    let before_2 = layout
+        .active_workspace()
+        .unwrap()
+        .grid_window_visual_transform(&2)
+        .unwrap();
+
+    layout.consume_or_expel_window_left(None);
+    layout.verify_invariants();
+
+    let after_2 = layout
+        .active_workspace()
+        .unwrap()
+        .grid_window_visual_transform(&2)
+        .unwrap();
+    approx::assert_abs_diff_eq!(after_2.0.x, before_2.0.x, epsilon = 0.001);
+    approx::assert_abs_diff_eq!(after_2.0.y, before_2.0.y, epsilon = 0.001);
+}
+
+#[test]
+fn grid_set_column_display_normal_refreshes_grid_items() {
+    let mut layout = tabbed_column_and_column_grid();
+    assert!(layout
+        .active_workspace_mut()
+        .unwrap()
+        .set_grid_focus_for_window(&1));
+
+    layout.set_column_display(ColumnDisplay::Normal);
+    layout.verify_invariants();
+
+    let ws = layout.active_workspace().unwrap();
+    let go = ws.grid_overview().unwrap();
+    assert!(!go
+        .layout
+        .entries
+        .iter()
+        .any(|(item, _)| matches!(item, super::grid_overview::GridItem::Tab { .. })));
+    assert!(go.layout.entries.iter().any(|(item, _)| matches!(
+        item,
+        super::grid_overview::GridItem::Column { window_id, .. } if window_id == &1
+    )));
+    assert!(ws.grid_window_visual_transform(&1).is_some());
+    assert!(ws.grid_window_visual_transform(&2).is_some());
+}
+
+#[test]
+fn grid_move_window_to_workspace_keeps_source_grid_open() {
+    let mut layout = two_column_grid_focused_on_second();
+    let source_ws_id = layout.active_workspace().unwrap().id();
+
+    layout.move_to_workspace_down(true);
+    layout.verify_invariants();
+
+    let source_ws = layout.find_workspace_by_id(source_ws_id).unwrap().1;
+    assert!(source_ws.is_grid_overview_open());
+    assert!(!source_ws.has_window(&2));
+    assert_eq!(source_ws.grid_focused_window_id(), Some(1));
+}
+
+#[test]
+fn grid_window_scope_is_limited_to_open_grid_workspace() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddOutput(2),
+        Op::FocusOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::FocusOutput(2),
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::FocusOutput(1),
+        Op::ToggleGridOverview,
+    ]);
+
+    assert!(layout.window_is_in_open_grid_overview(&1));
+    assert!(!layout.window_is_in_open_grid_overview(&2));
+    assert!(!layout.confirm_grid_selection_for_window(&2));
+    assert!(layout.is_grid_overview_open());
+}
+
+#[test]
+fn grid_drop_position_uses_visual_cell_edges() {
+    let mut layout = tabbed_column_and_column_grid();
+    assert!(layout
+        .active_workspace_mut()
+        .unwrap()
+        .set_grid_focus_for_window(&1));
+    check_ops_on_layout(&mut layout, [Op::CompleteAnimations]);
+
+    let ws = layout.active_workspace().unwrap();
+    let (_, tab_middle, _) = grid_window_point(&layout, 1, 0.5, 0.25);
+    let (_, tab_left_edge, _) = grid_window_point(&layout, 1, 0.1, 0.5);
+    let (_, tab_right_edge, _) = grid_window_point(&layout, 1, 0.9, 0.5);
+    let (_, column_middle, _) = grid_window_point(&layout, 3, 0.5, 0.25);
+    let (_, column_left_edge, _) = grid_window_point(&layout, 3, 0.1, 0.5);
+    let (_, column_right_edge, _) = grid_window_point(&layout, 3, 0.9, 0.5);
+
+    assert_eq!(
+        ws.grid_insert_position(tab_middle),
+        Some(InsertPosition::InColumn(0, 0))
+    );
+    assert_eq!(
+        ws.grid_insert_position(tab_left_edge),
+        Some(InsertPosition::NewColumn(0))
+    );
+    assert_eq!(
+        ws.grid_insert_position(tab_right_edge),
+        Some(InsertPosition::NewColumn(1))
+    );
+    assert_eq!(
+        ws.grid_insert_position(column_middle),
+        Some(InsertPosition::InColumn(1, 0))
+    );
+    assert_eq!(
+        ws.grid_insert_position(column_left_edge),
+        Some(InsertPosition::NewColumn(1))
+    );
+    assert_eq!(
+        ws.grid_insert_position(column_right_edge),
+        Some(InsertPosition::NewColumn(2))
+    );
+}
+
+#[test]
+fn grid_insert_hint_area_uses_grid_visual_coordinates() {
+    let mut layout = tabbed_column_and_column_grid();
+    assert!(layout
+        .active_workspace_mut()
+        .unwrap()
+        .set_grid_focus_for_window(&1));
+    check_ops_on_layout(&mut layout, [Op::CompleteAnimations]);
+
+    let ws = layout.active_workspace().unwrap();
+    let (_, tab_left_edge, _) = grid_window_point(&layout, 1, 0.1, 0.5);
+    let (_, tab_right_edge, _) = grid_window_point(&layout, 1, 0.9, 0.5);
+    let (_, column_left_edge, _) = grid_window_point(&layout, 3, 0.1, 0.5);
+    let tab_rect = grid_window_visual_rect(&layout, 1);
+    let tab_group_right_rect = grid_window_visual_rect(&layout, 2);
+    let column_rect = grid_window_visual_rect(&layout, 3);
+
+    let (position, area) = ws
+        .grid_insert_position_and_hint_area(tab_left_edge)
+        .unwrap();
+    assert_eq!(position, InsertPosition::NewColumn(0));
+    assert!(area.loc.x + area.size.w <= tab_rect.loc.x);
+
+    let (position, area) = ws
+        .grid_insert_position_and_hint_area(tab_right_edge)
+        .unwrap();
+    assert_eq!(position, InsertPosition::NewColumn(1));
+    assert!(area.loc.x < tab_group_right_rect.loc.x + tab_group_right_rect.size.w);
+    assert!(column_rect.loc.x < area.loc.x + area.size.w);
+
+    let gap_point = Point::from((
+        (tab_right_edge.x + column_left_edge.x) / 2.,
+        tab_right_edge.y,
+    ));
+    assert!(ws.grid_insert_position_and_hint_area(gap_point).is_some());
+}
+
+#[test]
+fn grid_interactive_move_keeps_visual_scale_and_can_merge() {
+    let mut layout = large_grid_layout();
+    assert!(layout
+        .active_workspace_mut()
+        .unwrap()
+        .set_grid_focus_for_window(&1));
+    check_ops_on_layout(&mut layout, [Op::CompleteAnimations]);
+
+    let (output, start, visual_scale) = grid_window_point(&layout, 3, 0.5, 0.5);
+    let (_, target, _) = grid_window_point(&layout, 1, 0.5, 0.25);
+
+    assert!(visual_scale < 1.);
+    assert!(layout.interactive_move_begin(3, &output, start));
+    assert!(layout.interactive_move_update(&3, Point::from((300., 0.)), output.clone(), target));
+
+    let Some(InteractiveMoveState::Moving(move_)) = &layout.interactive_move else {
+        panic!("expected an interactive move");
+    };
+    approx::assert_abs_diff_eq!(move_.visual_scale, visual_scale, epsilon = 0.001);
+    approx::assert_abs_diff_eq!(move_.total_scale(1.), visual_scale, epsilon = 0.001);
+
+    layout.interactive_move_end(&3);
+    layout.verify_invariants();
+
+    assert_eq!(scrolling_column_ids(&layout), vec![vec![3, 1], vec![2]]);
+    assert!(layout.is_grid_overview_open());
+    assert_eq!(layout.grid_focused_window_id(), Some(3));
+}
+
+#[test]
+fn grid_interactive_move_starts_with_small_drag() {
+    let mut layout = large_grid_layout();
+    assert!(layout
+        .active_workspace_mut()
+        .unwrap()
+        .set_grid_focus_for_window(&1));
+    check_ops_on_layout(&mut layout, [Op::CompleteAnimations]);
+
+    let (output, start, _) = grid_window_point(&layout, 3, 0.5, 0.5);
+    let delta = Point::from((40., 0.));
+    assert!(layout.interactive_move_begin(3, &output, start));
+    assert!(layout.interactive_move_update(&3, delta, output, start + delta));
+
+    assert!(matches!(
+        layout.interactive_move,
+        Some(InteractiveMoveState::Moving(_))
+    ));
+}
+
+#[test]
+fn grid_recomputes_after_window_communicate_while_open() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::ToggleGridOverview,
+        Op::CompleteAnimations,
+    ]);
+    let initial_size = grid_entry_target_size(&layout, 1);
+
+    check_ops_on_layout(
+        &mut layout,
+        [
+            Op::SetForcedSize {
+                id: 1,
+                size: Some(Size::from((1000, 200))),
+            },
+            Op::Communicate(1),
+        ],
+    );
+    let after_communicate = grid_entry_target_size(&layout, 1);
+
+    check_ops_on_layout(
+        &mut layout,
+        [
+            Op::ToggleGridOverview,
+            Op::CompleteAnimations,
+            Op::ToggleGridOverview,
+            Op::CompleteAnimations,
+        ],
+    );
+    let after_reopen = grid_entry_target_size(&layout, 1);
+
+    assert_ne!(after_communicate, initial_size);
+    assert_eq!(after_communicate, after_reopen);
+}
+
+#[test]
+fn grid_recompute_while_rearranging_does_not_restart_animation() {
+    let mut layout = three_column_grid_layout(1);
+    check_ops_on_layout(
+        &mut layout,
+        [Op::ToggleGridOverview, Op::CompleteAnimations],
+    );
+
+    layout.move_right();
+    layout.verify_invariants();
+
+    check_ops_on_layout(&mut layout, [Op::AdvanceAnimations { msec_delta: 50 }]);
+    let value_before = grid_rearrange_anim_value(&layout);
+    assert!(value_before > 0.);
+
+    check_ops_on_layout(
+        &mut layout,
+        [
+            Op::SetForcedSize {
+                id: 1,
+                size: Some(Size::from((1000, 200))),
+            },
+            Op::Communicate(1),
+        ],
+    );
+    let value_after = grid_rearrange_anim_value(&layout);
+
+    assert!(value_after >= value_before);
+}
+
+#[test]
+fn grid_passive_recompute_when_idle_does_not_start_rearrange_animation() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::ToggleGridOverview,
+        Op::CompleteAnimations,
+    ]);
+
+    assert!(!grid_has_rearrange_anim(&layout));
+    check_ops_on_layout(
+        &mut layout,
+        [
+            Op::SetForcedSize {
+                id: 1,
+                size: Some(Size::from((1000, 200))),
+            },
+            Op::Communicate(1),
+        ],
+    );
+
+    assert!(!grid_has_rearrange_anim(&layout));
+}
+
+#[test]
+fn grid_action_while_rearranging_restarts_animation() {
+    let mut layout = three_column_grid_layout(1);
+    check_ops_on_layout(
+        &mut layout,
+        [Op::ToggleGridOverview, Op::CompleteAnimations],
+    );
+
+    layout.move_right();
+    layout.verify_invariants();
+    check_ops_on_layout(&mut layout, [Op::AdvanceAnimations { msec_delta: 50 }]);
+    let value_before = grid_rearrange_anim_value(&layout);
+    assert!(value_before > 0.);
+
+    layout.move_right();
+    layout.verify_invariants();
+    let value_after = grid_rearrange_anim_value(&layout);
+
+    assert!(value_after < value_before);
+    approx::assert_abs_diff_eq!(value_after, 0., epsilon = 0.001);
 }
 
 #[test]

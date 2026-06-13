@@ -82,22 +82,26 @@ impl MoveGrab {
         let layout = &mut data.niri.layout;
         match self.gesture {
             GestureState::Recognizing => {
-                // Activate the window on release. This is most prominent in the overview where
-                // windows are not activated on click. In the overview, we also try to do a nice
-                // synchronized workspace animation.
-                if layout.is_overview_open() {
-                    let res = layout.workspaces().find_map(|(mon, ws_idx, ws)| {
-                        ws.windows()
-                            .any(|w| w.window == self.window)
-                            .then(|| (mon.map(|mon| mon.output().clone()), ws_idx))
-                    });
-                    if let Some((Some(output), ws_idx)) = res {
-                        layout.focus_output(&output);
-                        layout.toggle_overview_to_workspace(ws_idx);
+                if layout.window_is_in_open_grid_overview(&self.window) {
+                    layout.confirm_grid_selection_for_window(&self.window);
+                } else {
+                    // Activate the window on release. This is most prominent in the overview where
+                    // windows are not activated on click. In the overview, we also try to do a nice
+                    // synchronized workspace animation.
+                    if layout.is_overview_open() {
+                        let res = layout.workspaces().find_map(|(mon, ws_idx, ws)| {
+                            ws.windows()
+                                .any(|w| w.window == self.window)
+                                .then(|| (mon.map(|mon| mon.output().clone()), ws_idx))
+                        });
+                        if let Some((Some(output), ws_idx)) = res {
+                            layout.focus_output(&output);
+                            layout.toggle_overview_to_workspace(ws_idx);
+                        }
                     }
-                }
 
-                layout.activate_window(&self.window);
+                    layout.activate_window(&self.window);
+                }
             }
             GestureState::Move => layout.interactive_move_end(&self.window),
             GestureState::ViewOffset => {

@@ -143,6 +143,7 @@ pub(super) enum InsertWorkspace {
 pub(super) struct InsertHint {
     pub workspace: InsertWorkspace,
     pub position: InsertPosition,
+    pub area: Option<Rectangle<f64, Logical>>,
     pub corner_radius: CornerRadius,
 }
 
@@ -1109,7 +1110,9 @@ impl<W: LayoutElement> Monitor<W> {
             match hint.workspace {
                 InsertWorkspace::Existing(ws_id) => {
                     if let Some(ws) = self.workspaces.iter().find(|ws| ws.id() == ws_id) {
-                        if let Some(mut area) = ws.insert_hint_area(hint.position) {
+                        if let Some(mut area) =
+                            hint.area.or_else(|| ws.insert_hint_area(hint.position))
+                        {
                             let scale = ws.scale().fractional_scale();
                             let view_size = ws.view_size();
 
@@ -1762,14 +1765,32 @@ impl<W: LayoutElement> Monitor<W> {
                         Relocate::Relative,
                     )
                 };
-                let mut grid_push = |elem| {
-                    let elem = CropRenderElement::from_element(elem, scale, crop_bounds);
-                    if let Some(elem) = elem {
-                        let elem = MonitorInnerRenderElement::from(elem);
-                        push(grid_scale_relocate(elem));
+                if let Some(loc) = insert_hint_render_loc {
+                    if loc.workspace == InsertWorkspace::Existing(ws.id()) {
+                        let mut grid_hint_push = |elem| {
+                            let elem = CropRenderElement::from_element(elem, scale, crop_bounds);
+                            if let Some(elem) = elem {
+                                let elem = MonitorInnerRenderElement::from(elem);
+                                push(grid_scale_relocate(elem));
+                            }
+                        };
+                        self.insert_hint_element.render(
+                            ctx.renderer,
+                            loc.location,
+                            &mut grid_hint_push,
+                        );
                     }
-                };
-                ws.render_grid_overview(ctx.r(), &mut grid_push, xray_pos);
+                }
+                {
+                    let mut grid_push = |elem| {
+                        let elem = CropRenderElement::from_element(elem, scale, crop_bounds);
+                        if let Some(elem) = elem {
+                            let elem = MonitorInnerRenderElement::from(elem);
+                            push(grid_scale_relocate(elem));
+                        }
+                    };
+                    ws.render_grid_overview(ctx.r(), &mut grid_push, xray_pos);
+                }
                 continue;
             }
 

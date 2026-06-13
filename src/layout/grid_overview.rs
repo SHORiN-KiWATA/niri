@@ -106,6 +106,7 @@ pub struct GridOverview<W: LayoutElement> {
     pub entry_positions: Vec<(GridItem<W>, Point<f64, Logical>)>,
     pub entry_scales: Vec<(GridItem<W>, f64)>,
     pub focus_boosts: Vec<(GridItem<W>, f64)>,
+    pub window_transition_starts: Vec<(W::Id, Point<f64, Logical>, f64)>,
     pub close_start_progress: f64,
     pub rearrange_anim: Option<Animation>,
     pub previous_focus: Option<(usize, usize)>,
@@ -129,6 +130,7 @@ impl<W: LayoutElement> GridOverview<W> {
             entry_positions: Vec::new(),
             entry_scales: Vec::new(),
             focus_boosts: Vec::new(),
+            window_transition_starts: Vec::new(),
             close_start_progress: 1.,
             rearrange_anim: None,
             previous_focus: None,
@@ -155,6 +157,7 @@ impl<W: LayoutElement> GridOverview<W> {
     pub fn toggle(&mut self) {
         self.open = !self.open;
         self.rearrange_anim = None;
+        self.window_transition_starts.clear();
 
         let from = self.progress.take().map_or(0., |p| p.value());
         let to = if self.open { 1. } else { 0. };
@@ -177,12 +180,14 @@ impl<W: LayoutElement> GridOverview<W> {
         &mut self,
         items: &[(GridItem<W>, Size<f64, Logical>)],
         area: Rectangle<f64, Logical>,
+        restart_rearrange: bool,
     ) {
         let old_layout = self.layout.clone();
         let progress_value = self.progress_value();
         let rearrange_value = self.rearrange_anim.as_ref().map(|anim| anim.value());
-        let should_rearrange = self.open && !self.layout.entries.is_empty();
-        if should_rearrange {
+        let should_rearrange = self.open && !old_layout.entries.is_empty();
+        let restart_rearrange = should_rearrange && restart_rearrange;
+        if restart_rearrange {
             self.rearrange_anim = Some(Animation::new(
                 self.clock.clone(),
                 0.,
@@ -196,21 +201,23 @@ impl<W: LayoutElement> GridOverview<W> {
         for (item, info) in &self.layout.entries {
             let old_info = Self::matching_value(&old_layout.entries, item);
             let entry_pos = Self::matching_value(&self.entry_positions, item).copied();
-            let pos = match (rearrange_value, entry_pos, old_info) {
+            let current_pos = match (rearrange_value, entry_pos, old_info) {
                 (Some(value), Some(entry), Some(old_info)) => {
-                    let x = entry.x + (old_info.target_pos.x - entry.x) * value;
-                    let y = entry.y + (old_info.target_pos.y - entry.y) * value;
-                    Point::from((x, y))
+                    Self::lerp_point(entry, old_info.target_pos, value)
                 }
                 (_, entry, Some(old_info)) if self.open => {
                     let entry = entry.unwrap_or(old_info.target_pos);
-                    let x = entry.x + (old_info.target_pos.x - entry.x) * progress_value;
-                    let y = entry.y + (old_info.target_pos.y - entry.y) * progress_value;
-                    Point::from((x, y))
+                    Self::lerp_point(entry, old_info.target_pos, progress_value)
                 }
                 _ => entry_pos
                     .or_else(|| old_info.map(|old_info| old_info.target_pos))
                     .unwrap_or(info.target_pos),
+            };
+            let pos = match (rearrange_value, entry_pos, old_info) {
+                (Some(value), Some(_), Some(_)) if !restart_rearrange => {
+                    Self::retarget_point(current_pos, info.target_pos, value)
+                }
+                _ => current_pos,
             };
             new_entries.push((item.clone(), pos));
         }
@@ -219,7 +226,7 @@ impl<W: LayoutElement> GridOverview<W> {
         for (item, info) in &self.layout.entries {
             let old_info = Self::matching_value(&old_layout.entries, item);
             let entry_scale = Self::matching_value(&self.entry_scales, item).copied();
-            let scale = match (rearrange_value, entry_scale, old_info) {
+            let current_scale = match (rearrange_value, entry_scale, old_info) {
                 (Some(value), Some(entry), Some(old_info)) => {
                     entry + (old_info.target_scale - entry) * value
                 }
@@ -229,6 +236,12 @@ impl<W: LayoutElement> GridOverview<W> {
                 _ => entry_scale
                     .or_else(|| old_info.map(|old_info| old_info.target_scale))
                     .unwrap_or(info.target_scale),
+            };
+            let scale = match (rearrange_value, entry_scale, old_info) {
+                (Some(value), Some(_), Some(_)) if !restart_rearrange => {
+                    Self::retarget_value(current_scale, info.target_scale, value)
+                }
+                _ => current_scale,
             };
             new_scales.push((item.clone(), scale));
         }
@@ -255,6 +268,42 @@ impl<W: LayoutElement> GridOverview<W> {
             .find(|(entry, _)| entry.same_animation_identity(item))
             .or_else(|| entries.iter().find(|(entry, _)| entry == item))
             .map(|(_, value)| value)
+    }
+
+    fn lerp_point(
+        from: Point<f64, Logical>,
+        to: Point<f64, Logical>,
+        value: f64,
+    ) -> Point<f64, Logical> {
+        Point::from((
+            from.x + (to.x - from.x) * value,
+            from.y + (to.y - from.y) * value,
+        ))
+    }
+
+    fn retarget_point(
+        current: Point<f64, Logical>,
+        target: Point<f64, Logical>,
+        value: f64,
+    ) -> Point<f64, Logical> {
+        let remaining = 1. - value;
+        if remaining <= 0.0001 {
+            current
+        } else {
+            Point::from((
+                (current.x - target.x * value) / remaining,
+                (current.y - target.y * value) / remaining,
+            ))
+        }
+    }
+
+    fn retarget_value(current: f64, target: f64, value: f64) -> f64 {
+        let remaining = 1. - value;
+        if remaining <= 0.0001 {
+            current
+        } else {
+            (current - target * value) / remaining
+        }
     }
 
     pub(super) fn entry_visual_transform(
@@ -352,12 +401,38 @@ impl<W: LayoutElement> GridOverview<W> {
         };
 
         // Prevent spring overshoot from shrinking the item below its normal size.
-        let boost = boost.max(1.);
-        if matches!(item, GridItem::Floating { .. }) {
-            boost.min(1. / info.target_scale.max(0.0001)).max(1.)
-        } else {
-            boost
-        }
+        boost.max(1.)
+    }
+
+    pub(super) fn set_window_transition_starts(
+        &mut self,
+        starts: Vec<(W::Id, Point<f64, Logical>, f64)>,
+    ) {
+        self.window_transition_starts = starts;
+    }
+
+    pub(super) fn window_visual_transform(
+        &self,
+        window: &W::Id,
+        target_pos: Point<f64, Logical>,
+        target_scale: f64,
+    ) -> (Point<f64, Logical>, f64) {
+        let Some(anim) = &self.rearrange_anim else {
+            return (target_pos, target_scale);
+        };
+        let Some((_, start_pos, start_scale)) = self
+            .window_transition_starts
+            .iter()
+            .find(|(id, _, _)| id == window)
+        else {
+            return (target_pos, target_scale);
+        };
+
+        let value = anim.value();
+        (
+            Self::lerp_point(*start_pos, target_pos, value),
+            start_scale + (target_scale - start_scale) * value,
+        )
     }
 
     pub fn set_focus(&mut self, focus: (usize, usize)) {
@@ -379,6 +454,13 @@ impl<W: LayoutElement> GridOverview<W> {
         }
 
         self.focus = focus;
+    }
+
+    pub fn set_focus_without_animation(&mut self, focus: (usize, usize)) {
+        self.focus = focus;
+        self.previous_focus = None;
+        self.focus_boost_anim = None;
+        self.focus_boosts.clear();
     }
 
     pub(super) fn snapshot_close_start_visuals(
@@ -447,6 +529,7 @@ impl<W: LayoutElement> GridOverview<W> {
             if let GridItem::Column {
                 col_idx: c,
                 window_id: wid,
+                ..
             } = item
             {
                 if *c == col_idx {
@@ -651,6 +734,7 @@ impl<W: LayoutElement> GridOverview<W> {
         if let Some(anim) = &mut self.rearrange_anim {
             if anim.is_done() {
                 self.rearrange_anim = None;
+                self.window_transition_starts.clear();
                 self.sync_entries_to_layout();
             }
         }
@@ -682,6 +766,7 @@ impl<W: LayoutElement> GridOverview<W> {
             .iter()
             .map(|(item, _)| (item.clone(), 1.))
             .collect();
+        self.window_transition_starts.clear();
     }
 
     pub fn are_animations_ongoing(&self) -> bool {
@@ -785,11 +870,6 @@ impl<W: LayoutElement> GridLayout<W> {
                 let uniform_scale = tiling_scale.unwrap_or(independent_scale);
                 Self::blend_scale(uniform_scale, independent_scale, TILING_GRID_SCALE_WEIGHT)
             };
-            let target_scale = if is_floating {
-                target_scale.min(1.)
-            } else {
-                target_scale
-            };
             let scaled_w = in_size.w * target_scale;
             let scaled_h = in_size.h * target_scale;
 
@@ -799,7 +879,7 @@ impl<W: LayoutElement> GridLayout<W> {
             row_heights[row] = row_heights[row].max(target_size.h);
             row_counts[row] += 1;
 
-            entry_sizes.push((row, col, target_size, target_scale, is_floating));
+            entry_sizes.push((row, col, target_size, target_scale));
         }
 
         let fill_scale_for_width = row_content_widths
@@ -822,15 +902,9 @@ impl<W: LayoutElement> GridLayout<W> {
             row_content_widths.fill(0.);
             row_heights.fill(0.);
 
-            for (row, _, target_size, target_scale, is_floating) in &mut entry_sizes {
-                let item_fill_scale = if *is_floating {
-                    fill_scale.min(1. / target_scale.max(0.0001))
-                } else {
-                    fill_scale
-                };
-
-                *target_size = target_size.upscale(item_fill_scale);
-                *target_scale *= item_fill_scale;
+            for (row, _, target_size, target_scale) in &mut entry_sizes {
+                *target_size = target_size.upscale(fill_scale);
+                *target_scale *= fill_scale;
 
                 row_content_widths[*row] += target_size.w;
                 row_heights[*row] = row_heights[*row].max(target_size.h);
@@ -849,8 +923,7 @@ impl<W: LayoutElement> GridLayout<W> {
         let mut row_next_x = vec![0.; rows];
         let mut out_entries = Vec::with_capacity(n);
 
-        for ((item, _), (row, col, target_size, target_scale, _)) in entries.iter().zip(entry_sizes)
-        {
+        for ((item, _), (row, col, target_size, target_scale)) in entries.iter().zip(entry_sizes) {
             let row_width =
                 row_content_widths[row] + gap * row_counts[row].saturating_sub(1) as f64;
             let row_start_x = area.loc.x + padding.left + (content_w - row_width) / 2.;

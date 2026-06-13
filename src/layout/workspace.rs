@@ -121,6 +121,14 @@ pub struct Workspace<W: LayoutElement> {
     id: WorkspaceId,
 }
 
+pub(super) struct GridWindowVisual<W: LayoutElement> {
+    window_id: W::Id,
+    item: GridItem<W>,
+    column_tile_count: Option<usize>,
+    pos: Point<f64, Logical>,
+    scale: f64,
+}
+
 #[derive(Debug, Clone)]
 pub struct OutputId(String);
 
@@ -425,7 +433,7 @@ impl<W: LayoutElement> Workspace<W> {
                 go.entry_positions.push((item.clone(), normal));
             }
 
-            go.compute_layout(&items, self.working_area);
+            go.compute_layout(&items, self.working_area, false);
 
             // Initialize column_tile_focus for Column items.
             for (item, _) in &go.layout.entries {
@@ -489,7 +497,125 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn grid_focused_window_id(&self) -> Option<W::Id> {
-        self.grid_overview.as_ref().and_then(|g| g.focused_id())
+        let go = self.grid_overview.as_ref()?;
+        let item = go.focused_item()?;
+        if let GridItem::Column {
+            col_idx, window_id, ..
+        } = item
+        {
+            let tile_idx = go.get_column_tile_focus(*col_idx);
+            return self
+                .scrolling
+                .columns()
+                .nth(*col_idx)
+                .and_then(|col| col.tiles().nth(tile_idx))
+                .map(|(tile, _)| tile.window().id().clone())
+                .or_else(|| Some(window_id.clone()));
+        }
+
+        Some(item.window_id().clone())
+    }
+
+    pub(super) fn grid_expel_from_column_preferred_focus(&self) -> Option<W::Id> {
+        let id = self.grid_focused_window_id()?;
+        let item = self.grid_item_for_window(&id)?;
+        let col_idx = match item {
+            GridItem::Column { col_idx, .. } | GridItem::Tab { col_idx, .. } => col_idx,
+            GridItem::Floating { .. } => return Some(id),
+        };
+        let col = self.scrolling.columns().nth(col_idx)?;
+        let tile_idx = col.position(&id)?;
+        let tile_count = col.tiles().count();
+
+        if tile_count > 1 && tile_idx + 1 == tile_count {
+            return col
+                .tiles()
+                .nth(tile_idx - 1)
+                .map(|(tile, _)| tile.window().id().clone());
+        }
+
+        Some(id)
+    }
+
+    pub fn activate_grid_focused_window(&mut self) -> Option<W::Id> {
+        let id = self.grid_focused_window_id()?;
+        self.activate_window_from_grid(&id).then_some(id)
+    }
+
+    pub(super) fn grid_window_visual_snapshots(&self) -> Vec<GridWindowVisual<W>> {
+        if !self.is_grid_overview_open() {
+            return Vec::new();
+        }
+
+        self.windows()
+            .filter_map(|window| {
+                let window_id = window.id().clone();
+                let item = self.grid_item_for_window(&window_id)?;
+                let column_tile_count = self.grid_item_column_tile_count(&item);
+                let (pos, scale) = self.grid_window_visual_transform(&window_id)?;
+                Some(GridWindowVisual {
+                    window_id,
+                    item,
+                    column_tile_count,
+                    pos,
+                    scale,
+                })
+            })
+            .collect()
+    }
+
+    fn grid_item_column_tile_count(&self, item: &GridItem<W>) -> Option<usize> {
+        match item {
+            GridItem::Column { col_idx, .. } | GridItem::Tab { col_idx, .. } => {
+                Some(self.scrolling.column_tile_count(*col_idx))
+            }
+            GridItem::Floating { .. } => None,
+        }
+    }
+
+    fn set_grid_window_transition_starts(&mut self, snapshots: Vec<GridWindowVisual<W>>) {
+        let starts: Vec<_> = snapshots
+            .into_iter()
+            .filter_map(|snapshot| {
+                let new_item = self.grid_item_for_window(&snapshot.window_id)?;
+                let new_column_tile_count = self.grid_item_column_tile_count(&new_item);
+                let topology_changed = !new_item.matches_animation_key(&snapshot.item);
+                let target_changed = new_column_tile_count != snapshot.column_tile_count;
+                (topology_changed || target_changed).then_some((
+                    snapshot.window_id,
+                    snapshot.pos,
+                    snapshot.scale,
+                ))
+            })
+            .collect();
+
+        if let Some(go) = &mut self.grid_overview {
+            go.set_window_transition_starts(starts);
+        }
+    }
+
+    pub(super) fn refresh_grid_overview_after_action(
+        &mut self,
+        preferred_focus: Option<&W::Id>,
+        stop_move_animations: bool,
+        window_visual_snapshots: Vec<GridWindowVisual<W>>,
+    ) {
+        if !self.is_grid_overview_open() {
+            return;
+        }
+
+        if stop_move_animations {
+            self.scrolling.stop_move_animations();
+        }
+        self.recompute_grid_overview_layout(true);
+
+        let focus_set =
+            preferred_focus.is_some_and(|id| self.set_grid_focus_for_window_without_animation(id));
+        if !focus_set {
+            self.sync_grid_focus_to_active_window();
+        }
+
+        self.set_grid_window_transition_starts(window_visual_snapshots);
     }
 
     pub fn refresh_grid_entry_positions(&mut self) {
@@ -541,7 +667,10 @@ impl<W: LayoutElement> Workspace<W> {
 
     pub fn on_window_closed_in_grid(&mut self) {
         let previous_focus = self.grid_focused_window_id();
-        self.recompute_grid_overview_layout();
+        if self.is_grid_overview_open() {
+            self.scrolling.stop_move_animations();
+        }
+        self.recompute_grid_overview_layout(true);
 
         if let Some(id) = previous_focus {
             if self.set_grid_focus_for_window(&id) {
@@ -556,10 +685,11 @@ impl<W: LayoutElement> Workspace<W> {
         if let Some(go) = &mut self.grid_overview {
             if go.open {
                 go.record_added_window(id.clone());
+                self.scrolling.stop_move_animations();
             }
         }
 
-        self.recompute_grid_overview_layout();
+        self.recompute_grid_overview_layout(true);
         self.sync_grid_focus_to_active_window();
     }
 
@@ -569,7 +699,7 @@ impl<W: LayoutElement> Workspace<W> {
             .is_some_and(|go| go.open && go.window_was_added_while_open(id))
     }
 
-    fn recompute_grid_overview_layout(&mut self) {
+    fn recompute_grid_overview_layout(&mut self, restart_rearrange: bool) {
         let items = self.grid_overview_items();
         let working_area = self.working_area;
 
@@ -586,7 +716,7 @@ impl<W: LayoutElement> Workspace<W> {
             return;
         }
 
-        go.compute_layout(&items, working_area);
+        go.compute_layout(&items, working_area, restart_rearrange);
 
         // Sync column_tile_focus with new layout.
         let valid_col_indices: Vec<_> = go
@@ -617,7 +747,6 @@ impl<W: LayoutElement> Workspace<W> {
 
         self.grid_overview = Some(go);
     }
-
     pub fn fix_floating_state_for_active(&mut self) {
         if let Some(id) = self.grid_focused_window_id() {
             if self.floating.has_window(&id) {
@@ -744,7 +873,51 @@ impl<W: LayoutElement> Workspace<W> {
         go.entry_visual_transform(item, info, fallback_pos)
     }
 
+    pub(super) fn grid_window_visual_transform(
+        &self,
+        window: &W::Id,
+    ) -> Option<(Point<f64, Logical>, f64)> {
+        let go = self.grid_overview.as_ref().filter(|go| go.open)?;
+        let (target_pos, target_scale) = self.grid_window_target_visual_transform(window)?;
+        Some(go.window_visual_transform(window, target_pos, target_scale))
+    }
+
+    fn grid_window_target_visual_transform(
+        &self,
+        window: &W::Id,
+    ) -> Option<(Point<f64, Logical>, f64)> {
+        let go = self.grid_overview.as_ref().filter(|go| go.open)?;
+        let item = self.grid_item_for_window(window)?;
+        let (_, info) = go
+            .layout
+            .entries
+            .iter()
+            .find(|(entry, _)| entry.matches_animation_key(&item))?;
+        let (visual_pos, visual_scale) = self.grid_item_visual_transform(go, &item, info);
+
+        match item {
+            GridItem::Column { .. } | GridItem::Tab { .. } => {
+                let preview = self.scrolling.grid_preview_with_stable_origin(&item)?;
+                let preview_tile = preview
+                    .tiles
+                    .into_iter()
+                    .find(|tile| tile.tile.window().id() == window)?;
+                let target_pos = visual_pos + preview_tile.pos.upscale(visual_scale);
+                Some((target_pos, visual_scale))
+            }
+            GridItem::Floating { .. } => Some((visual_pos, visual_scale)),
+        }
+    }
+
     pub fn set_grid_focus_for_window(&mut self, id: &W::Id) -> bool {
+        self.set_grid_focus_for_window_impl(id, true)
+    }
+
+    fn set_grid_focus_for_window_without_animation(&mut self, id: &W::Id) -> bool {
+        self.set_grid_focus_for_window_impl(id, false)
+    }
+
+    fn set_grid_focus_for_window_impl(&mut self, id: &W::Id, animate: bool) -> bool {
         let Some(item) = self.grid_item_for_window(id) else {
             return false;
         };
@@ -766,7 +939,11 @@ impl<W: LayoutElement> Workspace<W> {
             return false;
         };
 
-        go.set_focus((row, col));
+        if animate {
+            go.set_focus((row, col));
+        } else {
+            go.set_focus_without_animation((row, col));
+        }
         if let Some((col_idx, tile_idx)) = column_tile_focus {
             go.set_column_tile_focus(col_idx, tile_idx, id.clone());
         } else {
@@ -799,6 +976,7 @@ impl<W: LayoutElement> Workspace<W> {
         self.floating
             .update_render_elements(is_active && self.floating_is_active.get(), view_rect);
 
+        let grid_focused_window_id = self.grid_focused_window_id();
         if let Some(ref go) = self.grid_overview {
             if go.open || go.progress.is_some() {
                 let is_closing = !go.open;
@@ -809,22 +987,26 @@ impl<W: LayoutElement> Workspace<W> {
                     }
 
                     let is_grid_focused = info.row == go.focus.0 && info.col == go.focus.1;
-                    let focused_window = is_grid_focused.then(|| item.window_id());
+                    let focused_window = is_grid_focused
+                        .then_some(())
+                        .and_then(|_| grid_focused_window_id.as_ref());
 
                     if is_grid_focused {
                         let target_scale = info.target_scale;
-                        let window_id = item.window_id();
-                        for tile in self.scrolling.tiles_mut().chain(self.floating.tiles_mut()) {
-                            if tile.window().id() == window_id {
-                                let normal_width = tile.focus_ring().config().width;
-                                if normal_width > 0. {
-                                    let max_width = normal_width * 2.;
-                                    let grid_width = (normal_width
-                                        / target_scale.max(0.0001).sqrt())
-                                    .clamp(normal_width, max_width);
-                                    tile.focus_ring_mut().set_width_override(grid_width);
+                        if let Some(window_id) = focused_window {
+                            for tile in self.scrolling.tiles_mut().chain(self.floating.tiles_mut())
+                            {
+                                if tile.window().id() == window_id {
+                                    let normal_width = tile.focus_ring().config().width;
+                                    if normal_width > 0. {
+                                        let max_width = normal_width * 2.;
+                                        let grid_width = (normal_width
+                                            / target_scale.max(0.0001).sqrt())
+                                        .clamp(normal_width, max_width);
+                                        tile.focus_ring_mut().set_width_override(grid_width);
+                                    }
+                                    break;
                                 }
-                                break;
                             }
                         }
                     }
@@ -2247,7 +2429,8 @@ impl<W: LayoutElement> Workspace<W> {
                                item_visual_scale: f64,
                                render_focus_ring: bool,
                                suppress_decorations: bool,
-                               suppress_shadow: bool| {
+                               suppress_shadow: bool,
+                               ignore_alpha_animation: bool| {
                 let geo = base_xray_pos.pos_in_backdrop.upscale(overview_zoom);
                 let tile_visual_pos = item_visual_pos + tile_rel_pos.upscale(item_visual_scale);
                 let xray_pos = XrayPos::new(
@@ -2276,13 +2459,23 @@ impl<W: LayoutElement> Workspace<W> {
                     push(elem.into());
                 };
 
-                tile.render(
-                    ctx.r(),
-                    tile_rel_pos,
-                    xray_pos,
-                    render_focus_ring,
-                    &mut push_grid_elem,
-                );
+                if ignore_alpha_animation {
+                    tile.render_ignoring_alpha_animation(
+                        ctx.r(),
+                        tile_rel_pos,
+                        xray_pos,
+                        render_focus_ring,
+                        &mut push_grid_elem,
+                    );
+                } else {
+                    tile.render(
+                        ctx.r(),
+                        tile_rel_pos,
+                        xray_pos,
+                        render_focus_ring,
+                        &mut push_grid_elem,
+                    );
+                }
             };
 
             let render_tab_indicator =
@@ -2349,41 +2542,63 @@ impl<W: LayoutElement> Workspace<W> {
 
                 match item {
                     GridItem::Column { col_idx, .. } => {
-                        let Some(preview) = self.scrolling.grid_preview(item) else {
+                        let Some(preview) = self.scrolling.grid_preview_with_stable_origin(item)
+                        else {
                             return;
                         };
                         let grid_tile_idx = go.get_column_tile_focus(*col_idx);
                         for preview_tile in preview.tiles {
                             let is_grid_focused = preview_tile.tile_idx == grid_tile_idx;
+                            let target_tile_pos =
+                                visual_pos + preview_tile.pos.upscale(visual_scale);
+                            let (tile_visual_pos, tile_visual_scale) = go.window_visual_transform(
+                                preview_tile.tile.window().id(),
+                                target_tile_pos,
+                                visual_scale,
+                            );
+                            let item_visual_pos =
+                                tile_visual_pos - preview_tile.pos.upscale(tile_visual_scale);
                             render_tile(
                                 ctx,
                                 push,
                                 preview_tile.tile,
                                 preview_tile.pos,
-                                visual_pos,
-                                visual_scale,
+                                item_visual_pos,
+                                tile_visual_scale,
                                 is_focused && is_grid_focused,
                                 false,
                                 false,
+                                true,
                             );
                         }
                     }
                     GridItem::Tab { window_id, .. } => {
-                        let Some(preview) = self.scrolling.grid_preview(item) else {
+                        let Some(preview) = self.scrolling.grid_preview_with_stable_origin(item)
+                        else {
                             return;
                         };
 
                         for preview_tile in preview.tiles {
+                            let target_tile_pos =
+                                visual_pos + preview_tile.pos.upscale(visual_scale);
+                            let (tile_visual_pos, tile_visual_scale) = go.window_visual_transform(
+                                preview_tile.tile.window().id(),
+                                target_tile_pos,
+                                visual_scale,
+                            );
+                            let item_visual_pos =
+                                tile_visual_pos - preview_tile.pos.upscale(tile_visual_scale);
                             render_tile(
                                 ctx,
                                 push,
                                 preview_tile.tile,
                                 preview_tile.pos,
-                                visual_pos,
-                                visual_scale,
+                                item_visual_pos,
+                                tile_visual_scale,
                                 is_focused && preview_tile.tile.window().id() == window_id,
                                 suppress_decorations,
                                 suppress_shadow,
+                                true,
                             );
                         }
 
@@ -2411,14 +2626,18 @@ impl<W: LayoutElement> Workspace<W> {
                             return;
                         };
 
+                        let (tile_visual_pos, tile_visual_scale) =
+                            go.window_visual_transform(window_id, visual_pos, visual_scale);
+
                         render_tile(
                             ctx,
                             push,
                             tile,
                             Point::from((0., 0.)),
-                            visual_pos,
-                            visual_scale,
+                            tile_visual_pos,
+                            tile_visual_scale,
                             is_focused,
+                            false,
                             false,
                             false,
                         );
@@ -2599,7 +2818,7 @@ impl<W: LayoutElement> Workspace<W> {
                     return Some((true, tile_size, visual_pos));
                 }
 
-                let preview = self.scrolling.grid_preview(&item)?;
+                let preview = self.scrolling.grid_preview_with_stable_origin(&item)?;
                 let preview_tile = preview
                     .tiles
                     .into_iter()
@@ -2667,17 +2886,18 @@ impl<W: LayoutElement> Workspace<W> {
                     continue;
                 }
 
-                let x = info.target_pos.x;
-                let y = info.target_pos.y;
-                let w = info.target_size.w.max(10.);
-                let h = info.target_size.h.max(10.);
+                let (visual_pos, visual_scale) = self.grid_item_visual_transform(go, item, info);
+                let source_size = info.target_size.downscale(info.target_scale.max(0.0001));
+                let visual_size = source_size.upscale(visual_scale);
+                let rect = Rectangle::new(visual_pos, visual_size);
 
-                if x <= pos.x && pos.x <= x + w && y <= pos.y && pos.y <= y + h {
+                if rect.contains(pos) {
                     match item {
                         GridItem::Column { .. } | GridItem::Tab { .. } => {
-                            if let Some(preview) = self.scrolling.grid_preview(item) {
-                                let rel = (pos - info.target_pos)
-                                    .downscale(info.target_scale.max(0.0001));
+                            if let Some(preview) =
+                                self.scrolling.grid_preview_with_stable_origin(item)
+                            {
+                                let rel = (pos - visual_pos).downscale(visual_scale.max(0.0001));
                                 for preview_tile in preview.tiles {
                                     let tile_size = preview_tile.tile.animated_tile_size();
                                     let tile_rect = Rectangle::new(preview_tile.pos, tile_size);
@@ -2751,6 +2971,9 @@ impl<W: LayoutElement> Workspace<W> {
     pub fn update_window(&mut self, window: &W::Id, serial: Option<Serial>) {
         if !self.floating.update_window(window, serial) {
             self.scrolling.update_window(window, serial);
+        }
+        if self.is_grid_overview_open() {
+            self.recompute_grid_overview_layout(false);
         }
     }
 
@@ -2840,6 +3063,338 @@ impl<W: LayoutElement> Workspace<W> {
 
     pub(super) fn scrolling_insert_position(&self, pos: Point<f64, Logical>) -> InsertPosition {
         self.scrolling.insert_position(pos)
+    }
+
+    pub(super) fn grid_insert_position(&self, pos: Point<f64, Logical>) -> Option<InsertPosition> {
+        self.grid_insert_position_and_hint_area(pos)
+            .map(|(position, _)| position)
+    }
+
+    pub(super) fn grid_insert_position_and_hint_area(
+        &self,
+        pos: Point<f64, Logical>,
+    ) -> Option<(InsertPosition, Rectangle<f64, Logical>)> {
+        let go = self.grid_overview.as_ref().filter(|go| go.open)?;
+        let column_count = self.scrolling.columns().count();
+
+        for pass in 0..3 {
+            for (item, info) in &go.layout.entries {
+                let is_focused = info.row == go.focus.0 && info.col == go.focus.1;
+                let is_previous_focus = go.previous_focus == Some((info.row, info.col));
+                let should_check = match pass {
+                    0 => is_focused,
+                    1 => !is_focused && is_previous_focus,
+                    _ => !is_focused && !is_previous_focus,
+                };
+                if !should_check {
+                    continue;
+                }
+
+                let (visual_pos, visual_scale) = self.grid_item_visual_transform(go, item, info);
+                let source_size = info.target_size.downscale(info.target_scale.max(0.0001));
+                let visual_size = source_size.upscale(visual_scale);
+                if !Rectangle::new(visual_pos, visual_size).contains(pos) {
+                    continue;
+                }
+
+                let position = self.grid_insert_position_for_item(
+                    item,
+                    pos,
+                    visual_pos,
+                    visual_scale,
+                    source_size,
+                    column_count,
+                );
+                let hint_area = self.grid_insert_hint_area_for_item(
+                    go,
+                    item,
+                    info,
+                    position,
+                    visual_pos,
+                    visual_scale,
+                    source_size,
+                )?;
+                return Some((position, hint_area));
+            }
+        }
+
+        let mut nearest = None;
+        for (item, info) in &go.layout.entries {
+            let (visual_pos, visual_scale) = self.grid_item_visual_transform(go, item, info);
+            let source_size = info.target_size.downscale(info.target_scale.max(0.0001));
+            let visual_size = source_size.upscale(visual_scale);
+            let rect = Rectangle::new(visual_pos, visual_size);
+
+            let dx = if pos.x < rect.loc.x {
+                rect.loc.x - pos.x
+            } else if pos.x > rect.loc.x + rect.size.w {
+                pos.x - (rect.loc.x + rect.size.w)
+            } else {
+                0.
+            };
+            let dy = if pos.y < rect.loc.y {
+                rect.loc.y - pos.y
+            } else if pos.y > rect.loc.y + rect.size.h {
+                pos.y - (rect.loc.y + rect.size.h)
+            } else {
+                0.
+            };
+            let dist_sq = dx * dx + dy * dy;
+
+            if nearest
+                .as_ref()
+                .is_none_or(|(_, _, _, _, _, best_dist_sq)| dist_sq < *best_dist_sq)
+            {
+                nearest = Some((item, info, visual_pos, visual_scale, source_size, dist_sq));
+            }
+        }
+
+        let (item, info, visual_pos, visual_scale, source_size, dist_sq) = nearest?;
+        let max_distance = go.layout.gap.max(100.);
+        if dist_sq > max_distance * max_distance {
+            return None;
+        }
+
+        let position = self.grid_insert_position_for_item(
+            item,
+            pos,
+            visual_pos,
+            visual_scale,
+            source_size,
+            column_count,
+        );
+        let hint_area = self.grid_insert_hint_area_for_item(
+            go,
+            item,
+            info,
+            position,
+            visual_pos,
+            visual_scale,
+            source_size,
+        )?;
+        Some((position, hint_area))
+    }
+
+    fn grid_insert_position_for_item(
+        &self,
+        item: &GridItem<W>,
+        pos: Point<f64, Logical>,
+        visual_pos: Point<f64, Logical>,
+        visual_scale: f64,
+        source_size: Size<f64, Logical>,
+        column_count: usize,
+    ) -> InsertPosition {
+        let source_pos = (pos - visual_pos).downscale(visual_scale.max(0.0001));
+        let edge = source_size.w * 0.25;
+
+        match item {
+            GridItem::Column { col_idx, .. } => {
+                if source_pos.x < edge {
+                    InsertPosition::NewColumn(*col_idx)
+                } else if source_pos.x > source_size.w - edge {
+                    InsertPosition::NewColumn(col_idx + 1)
+                } else {
+                    let tile_idx = self.grid_in_column_tile_insert_idx(item, source_pos.y);
+                    InsertPosition::InColumn(*col_idx, tile_idx)
+                }
+            }
+            GridItem::Tab {
+                col_idx, tile_idx, ..
+            } => {
+                if source_pos.x < edge {
+                    InsertPosition::NewColumn(*col_idx)
+                } else if source_pos.x > source_size.w - edge {
+                    InsertPosition::NewColumn(col_idx + 1)
+                } else {
+                    let after = source_pos.y >= source_size.h / 2.;
+                    InsertPosition::InColumn(*col_idx, tile_idx + usize::from(after))
+                }
+            }
+            GridItem::Floating { .. } => InsertPosition::NewColumn(column_count),
+        }
+    }
+
+    fn grid_insert_hint_area_for_item(
+        &self,
+        go: &GridOverview<W>,
+        item: &GridItem<W>,
+        info: &GridEntryInfo,
+        position: InsertPosition,
+        visual_pos: Point<f64, Logical>,
+        visual_scale: f64,
+        source_size: Size<f64, Logical>,
+    ) -> Option<Rectangle<f64, Logical>> {
+        if let InsertPosition::NewColumn(column_idx) = position {
+            let insert_left = match item {
+                GridItem::Column { col_idx, .. } | GridItem::Tab { col_idx, .. } => {
+                    column_idx <= *col_idx
+                }
+                GridItem::Floating { .. } => false,
+            };
+            return self.grid_new_column_insert_hint_area(
+                go,
+                info,
+                column_idx,
+                insert_left,
+                visual_pos,
+                visual_scale,
+                source_size,
+            );
+        }
+
+        let source_rect = match position {
+            InsertPosition::NewColumn(_) => unreachable!(),
+            InsertPosition::InColumn(_, tile_idx) => {
+                let height = (source_size.h * 0.16).clamp(20., 150.);
+                let y = self.grid_insert_hint_source_y(item, tile_idx, height)?;
+                Rectangle::new(Point::from((0., y)), Size::from((source_size.w, height)))
+            }
+            InsertPosition::Floating => return None,
+        };
+
+        Some(Rectangle::new(
+            visual_pos + source_rect.loc.upscale(visual_scale),
+            source_rect.size.upscale(visual_scale),
+        ))
+    }
+
+    fn grid_new_column_insert_hint_area(
+        &self,
+        go: &GridOverview<W>,
+        info: &GridEntryInfo,
+        column_idx: usize,
+        insert_left: bool,
+        visual_pos: Point<f64, Logical>,
+        visual_scale: f64,
+        source_size: Size<f64, Logical>,
+    ) -> Option<Rectangle<f64, Logical>> {
+        let current_rect = Rectangle::new(visual_pos, source_size.upscale(visual_scale));
+        let left_rect = column_idx
+            .checked_sub(1)
+            .and_then(|idx| self.grid_column_group_edge_rect(go, idx, info.row, true));
+        let right_rect = self.grid_column_group_edge_rect(go, column_idx, info.row, false);
+
+        match (left_rect, right_rect) {
+            (Some(left_rect), Some(right_rect)) => {
+                let left_right = left_rect.loc.x + left_rect.size.w;
+                let gap = (right_rect.loc.x - left_right).max(0.);
+                let width = (gap + left_rect.size.w.min(right_rect.size.w) * 0.25).max(30.);
+                let center_x = (left_right + right_rect.loc.x) / 2.;
+                let top = left_rect.loc.y.min(right_rect.loc.y);
+                let bottom =
+                    (left_rect.loc.y + left_rect.size.h).max(right_rect.loc.y + right_rect.size.h);
+
+                Some(Rectangle::new(
+                    Point::from((center_x - width / 2., top)),
+                    Size::from((width, bottom - top)),
+                ))
+            }
+            (None, Some(right_rect)) => {
+                let width = (right_rect.size.w * 0.25).clamp(30., 300.);
+                Some(Rectangle::new(
+                    Point::from((right_rect.loc.x - go.layout.gap - width, right_rect.loc.y)),
+                    Size::from((width, right_rect.size.h)),
+                ))
+            }
+            (Some(left_rect), None) => {
+                let width = (left_rect.size.w * 0.25).clamp(30., 300.);
+                Some(Rectangle::new(
+                    Point::from((
+                        left_rect.loc.x + left_rect.size.w + go.layout.gap,
+                        left_rect.loc.y,
+                    )),
+                    Size::from((width, left_rect.size.h)),
+                ))
+            }
+            (None, None) => {
+                let width = (current_rect.size.w * 0.25).clamp(30., 300.);
+                let x = if insert_left {
+                    current_rect.loc.x - go.layout.gap - width
+                } else {
+                    current_rect.loc.x + current_rect.size.w + go.layout.gap
+                };
+                Some(Rectangle::new(
+                    Point::from((x, current_rect.loc.y)),
+                    Size::from((width, current_rect.size.h)),
+                ))
+            }
+        }
+    }
+
+    fn grid_column_group_edge_rect(
+        &self,
+        go: &GridOverview<W>,
+        col_idx: usize,
+        preferred_row: usize,
+        right_edge: bool,
+    ) -> Option<Rectangle<f64, Logical>> {
+        let mut best = None;
+        for (item, info) in &go.layout.entries {
+            let item_col_idx = match item {
+                GridItem::Column { col_idx, .. } | GridItem::Tab { col_idx, .. } => *col_idx,
+                GridItem::Floating { .. } => continue,
+            };
+            if item_col_idx != col_idx {
+                continue;
+            }
+
+            let (pos, scale) = self.grid_item_visual_transform(go, item, info);
+            let source_size = info.target_size.downscale(info.target_scale.max(0.0001));
+            let rect = Rectangle::new(pos, source_size.upscale(scale));
+            let row_distance = info.row.abs_diff(preferred_row);
+            let edge = if right_edge {
+                rect.loc.x + rect.size.w
+            } else {
+                -rect.loc.x
+            };
+
+            if best.as_ref().is_none_or(|(best_row, best_edge, _)| {
+                row_distance < *best_row || row_distance == *best_row && edge > *best_edge
+            }) {
+                best = Some((row_distance, edge, rect));
+            }
+        }
+
+        best.map(|(_, _, rect)| rect)
+    }
+
+    fn grid_insert_hint_source_y(
+        &self,
+        item: &GridItem<W>,
+        tile_idx: usize,
+        hint_height: f64,
+    ) -> Option<f64> {
+        let preview = self.scrolling.grid_preview_with_stable_origin(item)?;
+        let mut last_bottom = 0.;
+        for preview_tile in preview.tiles {
+            let top = preview_tile.pos.y;
+            let bottom = top + preview_tile.tile.tile_size().h;
+            if tile_idx <= preview_tile.tile_idx {
+                return Some((top - hint_height / 2.).max(0.));
+            }
+            last_bottom = bottom;
+        }
+
+        Some((last_bottom - hint_height).max(0.))
+    }
+
+    fn grid_in_column_tile_insert_idx(&self, item: &GridItem<W>, y: f64) -> usize {
+        let Some(preview) = self.scrolling.grid_preview_with_stable_origin(item) else {
+            return 0;
+        };
+
+        for preview_tile in preview.tiles {
+            let top = preview_tile.pos.y;
+            let bottom = top + preview_tile.tile.tile_size().h;
+            if y < (top + bottom) / 2. {
+                return preview_tile.tile_idx;
+            }
+        }
+
+        self.scrolling.column_tile_count(match item {
+            GridItem::Column { col_idx, .. } | GridItem::Tab { col_idx, .. } => *col_idx,
+            GridItem::Floating { .. } => 0,
+        })
     }
 
     pub(super) fn insert_hint_area(

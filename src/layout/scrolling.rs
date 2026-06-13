@@ -485,17 +485,25 @@ impl<W: LayoutElement> ScrollingSpace<W> {
     }
 
     pub fn grid_preview(&self, item: &GridItem<W>) -> Option<GridPreview<'_, W>> {
-        self.grid_preview_at_view_pos(item, self.view_pos())
+        self.grid_preview_at_view_pos(item, self.view_pos(), false)
+    }
+
+    pub fn grid_preview_with_stable_origin(
+        &self,
+        item: &GridItem<W>,
+    ) -> Option<GridPreview<'_, W>> {
+        self.grid_preview_at_view_pos(item, self.view_pos(), true)
     }
 
     pub fn grid_preview_at_target(&self, item: &GridItem<W>) -> Option<GridPreview<'_, W>> {
-        self.grid_preview_at_view_pos(item, self.target_view_pos())
+        self.grid_preview_at_view_pos(item, self.target_view_pos(), false)
     }
 
     fn grid_preview_at_view_pos(
         &self,
         item: &GridItem<W>,
         view_pos: f64,
+        stable_origin: bool,
     ) -> Option<GridPreview<'_, W>> {
         let (col_idx, tab_window) = match item {
             GridItem::Column { col_idx, .. } => (*col_idx, None),
@@ -520,22 +528,34 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         if let Some(window) = tab_window {
             for (tile_idx, (tile, tile_off)) in col.tiles().enumerate() {
                 if tile.window().id() == window {
-                    let pos = view_off + col_off + col_render_off + tile_off + tile.render_offset();
+                    let base_pos = view_off + col_off + tile_off;
+                    let pos = base_pos + col_render_off + tile.render_offset();
                     let pos = pos.to_physical_precise_round(scale).to_logical(scale);
+                    let origin_pos = if stable_origin {
+                        base_pos.to_physical_precise_round(scale).to_logical(scale)
+                    } else {
+                        pos
+                    };
 
-                    min_x = min_x.min(pos.x);
-                    min_y = min_y.min(pos.y);
+                    min_x = min_x.min(origin_pos.x);
+                    min_y = min_y.min(origin_pos.y);
                     tiles.push((tile, pos, tile_idx));
                     break;
                 }
             }
         } else {
             for (tile_idx, (tile, tile_off)) in col.tiles().enumerate() {
-                let pos = view_off + col_off + col_render_off + tile_off + tile.render_offset();
+                let base_pos = view_off + col_off + tile_off;
+                let pos = base_pos + col_render_off + tile.render_offset();
                 let pos = pos.to_physical_precise_round(scale).to_logical(scale);
+                let origin_pos = if stable_origin {
+                    base_pos.to_physical_precise_round(scale).to_logical(scale)
+                } else {
+                    pos
+                };
 
-                min_x = min_x.min(pos.x);
-                min_y = min_y.min(pos.y);
+                min_x = min_x.min(origin_pos.x);
+                min_y = min_y.min(origin_pos.y);
                 tiles.push((tile, pos, tile_idx));
             }
         }
@@ -2649,6 +2669,12 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         self.columns.iter()
     }
 
+    pub fn stop_move_animations(&mut self) {
+        for col in &mut self.columns {
+            col.stop_move_animations();
+        }
+    }
+
     pub fn column_tile_count(&self, col_idx: usize) -> usize {
         self.columns
             .get(col_idx)
@@ -4524,6 +4550,13 @@ impl<W: LayoutElement> Column<W> {
             anim,
             from: from_x_offset + current_offset,
         });
+    }
+
+    fn stop_move_animations(&mut self) {
+        self.move_animation = None;
+        for tile in &mut self.tiles {
+            tile.stop_move_animations();
+        }
     }
 
     pub fn offset_move_anim_current(&mut self, offset: f64) {
