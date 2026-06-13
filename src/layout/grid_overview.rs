@@ -185,6 +185,15 @@ impl<W: LayoutElement> GridOverview<W> {
         let old_layout = self.layout.clone();
         let progress_value = self.progress_value();
         let rearrange_value = self.rearrange_anim.as_ref().map(|anim| anim.value());
+        let opening_retarget_value = if self.open
+            && rearrange_value.is_none()
+            && !restart_rearrange
+            && self.progress.as_ref().is_some_and(|p| p.is_animation())
+        {
+            Some(progress_value)
+        } else {
+            None
+        };
         let should_rearrange = self.open && !old_layout.entries.is_empty();
         let restart_rearrange = should_rearrange && restart_rearrange;
         if restart_rearrange {
@@ -213,8 +222,11 @@ impl<W: LayoutElement> GridOverview<W> {
                     .or_else(|| old_info.map(|old_info| old_info.target_pos))
                     .unwrap_or(info.target_pos),
             };
-            let pos = match (rearrange_value, entry_pos, old_info) {
-                (Some(value), Some(_), Some(_)) if !restart_rearrange => {
+            let pos = match (rearrange_value, opening_retarget_value, entry_pos, old_info) {
+                (Some(value), _, Some(_), Some(_)) if !restart_rearrange => {
+                    Self::retarget_point(current_pos, info.target_pos, value)
+                }
+                (None, Some(value), Some(_), Some(_)) => {
                     Self::retarget_point(current_pos, info.target_pos, value)
                 }
                 _ => current_pos,
@@ -230,15 +242,24 @@ impl<W: LayoutElement> GridOverview<W> {
                 (Some(value), Some(entry), Some(old_info)) => {
                     entry + (old_info.target_scale - entry) * value
                 }
-                (_, _, Some(old_info)) if self.open => {
-                    1. + (old_info.target_scale - 1.) * progress_value
+                (_, entry, Some(old_info)) if self.open => {
+                    let entry = entry.unwrap_or(1.);
+                    entry + (old_info.target_scale - entry) * progress_value
                 }
                 _ => entry_scale
                     .or_else(|| old_info.map(|old_info| old_info.target_scale))
-                    .unwrap_or(info.target_scale),
+                    .unwrap_or(if self.open { info.target_scale } else { 1. }),
             };
-            let scale = match (rearrange_value, entry_scale, old_info) {
-                (Some(value), Some(_), Some(_)) if !restart_rearrange => {
+            let scale = match (
+                rearrange_value,
+                opening_retarget_value,
+                entry_scale,
+                old_info,
+            ) {
+                (Some(value), _, Some(_), Some(_)) if !restart_rearrange => {
+                    Self::retarget_value(current_scale, info.target_scale, value)
+                }
+                (None, Some(value), Some(_), Some(_)) => {
                     Self::retarget_value(current_scale, info.target_scale, value)
                 }
                 _ => current_scale,
@@ -342,6 +363,11 @@ impl<W: LayoutElement> GridOverview<W> {
 
         let anim_p = self.rearrange_anim.as_ref().map_or(p, |anim| anim.value());
         let is_rearranging = self.rearrange_anim.is_some();
+        let is_opening = self.open
+            && self
+                .progress
+                .as_ref()
+                .is_some_and(|progress| progress.is_animation());
 
         let normal_pos = Self::matching_value(&self.entry_positions, item)
             .copied()
@@ -352,7 +378,7 @@ impl<W: LayoutElement> GridOverview<W> {
             normal_pos.y + (info.target_pos.y - normal_pos.y) * anim_p,
         ));
 
-        let entry_scale = if is_rearranging {
+        let entry_scale = if is_rearranging || is_opening {
             Self::matching_value(&self.entry_scales, item)
                 .copied()
                 .unwrap_or(1.)

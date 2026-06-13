@@ -5126,6 +5126,44 @@ fn grid_recomputes_after_window_communicate_while_open() {
 }
 
 #[test]
+fn grid_passive_recompute_while_opening_preserves_visual_position() {
+    let mut layout = large_grid_layout();
+    check_ops_on_layout(&mut layout, [Op::AdvanceAnimations { msec_delta: 50 }]);
+
+    let progress_before = layout
+        .active_workspace()
+        .unwrap()
+        .grid_overview()
+        .unwrap()
+        .progress_value();
+    assert!(progress_before > 0. && progress_before < 1.);
+    let before = grid_window_visual_rect(&layout, 2).loc;
+
+    check_ops_on_layout(
+        &mut layout,
+        [
+            Op::SetForcedSize {
+                id: 2,
+                size: Some(Size::from((1000, 200))),
+            },
+            Op::Communicate(2),
+        ],
+    );
+
+    let progress_after = layout
+        .active_workspace()
+        .unwrap()
+        .grid_overview()
+        .unwrap()
+        .progress_value();
+    let after = grid_window_visual_rect(&layout, 2).loc;
+
+    approx::assert_abs_diff_eq!(progress_after, progress_before, epsilon = 0.0001);
+    approx::assert_abs_diff_eq!(after.x, before.x, epsilon = 0.001);
+    approx::assert_abs_diff_eq!(after.y, before.y, epsilon = 0.001);
+}
+
+#[test]
 fn grid_recompute_while_rearranging_does_not_restart_animation() {
     let mut layout = three_column_grid_layout(1);
     check_ops_on_layout(
