@@ -4737,6 +4737,8 @@ impl<W: LayoutElement> Layout<W> {
                         }
                     }
                 };
+                let preserve_grid_move_animations =
+                    matches!(position, InsertPosition::InColumn(..));
                 match position {
                     InsertPosition::NewColumn(column_idx) => {
                         let ws_id = mon.workspaces[ws_idx].id();
@@ -4812,7 +4814,11 @@ impl<W: LayoutElement> Layout<W> {
                 }
 
                 if let Some(ws) = mon.workspaces.iter_mut().find(|ws| ws.has_window(&win_id)) {
-                    ws.on_window_added_in_grid(&win_id);
+                    if preserve_grid_move_animations {
+                        ws.on_window_added_in_grid_preserving_move_animations(&win_id);
+                    } else {
+                        ws.on_window_added_in_grid(&win_id);
+                    }
                 }
 
                 // needed because empty_workspace_above_first could have modified the idx

@@ -682,10 +682,20 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn on_window_added_in_grid(&mut self, id: &W::Id) {
+        self.on_window_added_in_grid_impl(id, true);
+    }
+
+    pub fn on_window_added_in_grid_preserving_move_animations(&mut self, id: &W::Id) {
+        self.on_window_added_in_grid_impl(id, false);
+    }
+
+    fn on_window_added_in_grid_impl(&mut self, id: &W::Id, stop_move_animations: bool) {
         if let Some(go) = &mut self.grid_overview {
             if go.open {
                 go.record_added_window(id.clone());
-                self.scrolling.stop_move_animations();
+                if stop_move_animations {
+                    self.scrolling.stop_move_animations();
+                }
             }
         }
 

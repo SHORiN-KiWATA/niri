@@ -5067,6 +5067,45 @@ fn grid_interactive_move_keeps_visual_scale_and_can_merge() {
 }
 
 #[test]
+fn grid_interactive_insert_preserves_pushed_tile_move_animation() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::ConsumeOrExpelWindowLeft { id: None },
+        Op::AddWindow {
+            params: TestWindowParams::new(3),
+        },
+        Op::ToggleGridOverview,
+        Op::CompleteAnimations,
+    ]);
+
+    let (output, start, _) = grid_window_point(&layout, 3, 0.5, 0.5);
+    let (_, target, _) = grid_window_point(&layout, 2, 0.5, 0.25);
+    assert!(layout.interactive_move_begin(3, &output, start));
+    assert!(layout.interactive_move_update(&3, Point::from((300., 0.)), output, target));
+    layout.interactive_move_end(&3);
+    layout.verify_invariants();
+
+    assert_eq!(scrolling_column_ids(&layout), vec![vec![1, 3, 2]]);
+    let pushed_offset = layout
+        .active_workspace()
+        .unwrap()
+        .scrolling()
+        .columns()
+        .flat_map(|col| col.tiles())
+        .find(|(tile, _)| tile.window().id() == &2)
+        .map(|(tile, _)| tile.render_offset().y)
+        .unwrap();
+
+    assert!(pushed_offset.abs() > 0.001);
+}
+
+#[test]
 fn grid_interactive_move_starts_with_small_drag() {
     let mut layout = large_grid_layout();
     assert!(layout
