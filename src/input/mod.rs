@@ -2782,13 +2782,16 @@ impl State {
 
         // contents_under() will return no surface when the hot corner should trigger, so
         // pointer.motion() will set the current focus to None.
-        if under.hot_corner && pointer.current_focus().is_none() {
+        if let Some(action) = under
+            .hot_corner
+            .filter(|_| pointer.current_focus().is_none())
+        {
             if !was_inside_hot_corner
                 && pointer
                     .with_grab(|_, grab| grab_allows_hot_corner(grab))
                     .unwrap_or(true)
             {
-                self.niri.layout.toggle_overview();
+                self.niri.trigger_hot_corner(action);
             }
             self.niri.pointer_inside_hot_corner = true;
         }
@@ -2871,13 +2874,16 @@ impl State {
 
         // contents_under() will return no surface when the hot corner should trigger, so
         // pointer.motion() will set the current focus to None.
-        if under.hot_corner && pointer.current_focus().is_none() {
+        if let Some(action) = under
+            .hot_corner
+            .filter(|_| pointer.current_focus().is_none())
+        {
             if !was_inside_hot_corner
                 && pointer
                     .with_grab(|_, grab| grab_allows_hot_corner(grab))
                     .unwrap_or(true)
             {
-                self.niri.layout.toggle_overview();
+                self.niri.trigger_hot_corner(action);
             }
             self.niri.pointer_inside_hot_corner = true;
         }

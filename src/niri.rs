@@ -14,6 +14,7 @@ use _server_decoration::server::org_kde_kwin_server_decoration_manager::Mode as 
 use anyhow::{bail, ensure, Context};
 use calloop::futures::Scheduler;
 use niri_config::debug::PreviewRender;
+use niri_config::gestures::HotCornerAction;
 use niri_config::{
     Bind, Config, FloatOrInt, Key, Modifiers, OutputName, TrackLayout, WarpMouseToFocusMode,
     WorkspaceReference, Xkb,
@@ -557,7 +558,7 @@ pub struct PointContents {
     // If surface belongs to a layer surface, this is that layer surface.
     pub layer: Option<LayerSurface>,
     // Pointer is over a hot corner.
-    pub hot_corner: bool,
+    pub hot_corner: Option<HotCornerAction>,
 }
 
 #[derive(Debug, Default)]
@@ -3304,17 +3305,22 @@ impl Niri {
         Some((output, pos_within_output))
     }
 
-    fn is_inside_hot_corner(&self, output: &Output, pos: Point<f64, Logical>) -> bool {
+    fn hot_corner_action(
+        &self,
+        output: &Output,
+        pos: Point<f64, Logical>,
+    ) -> Option<HotCornerAction> {
         let config = self.config.borrow();
         let hot_corners = output
             .user_data()
             .get::<OutputName>()
             .and_then(|name| config.outputs.find(name))
             .and_then(|c| c.hot_corners)
-            .unwrap_or(config.gestures.hot_corners);
+            .unwrap_or(config.gestures.hot_corners)
+            .with_default_corners();
 
         if hot_corners.off {
-            return false;
+            return None;
         }
 
         // Use size from the ceiled output geometry, since that's what we currently use for pointer
@@ -3326,25 +3332,40 @@ impl Niri {
             Rectangle::new(corner, Size::new(1., 1.)).contains(pos)
         };
 
-        if hot_corners.top_right && contains(Point::new(size.w - 1., 0.)) {
-            return true;
-        }
-        if hot_corners.bottom_left && contains(Point::new(0., size.h - 1.)) {
-            return true;
-        }
-        if hot_corners.bottom_right && contains(Point::new(size.w - 1., size.h - 1.)) {
-            return true;
-        }
-
-        // If the user didn't explicitly set any corners, we default to top-left.
-        if (hot_corners.top_left
-            || !(hot_corners.top_right || hot_corners.bottom_right || hot_corners.bottom_left))
-            && contains(Point::new(0., 0.))
+        if let Some(action) = hot_corners
+            .top_right
+            .filter(|_| contains(Point::new(size.w - 1., 0.)))
         {
-            return true;
+            return Some(action);
+        }
+        if let Some(action) = hot_corners
+            .bottom_left
+            .filter(|_| contains(Point::new(0., size.h - 1.)))
+        {
+            return Some(action);
+        }
+        if let Some(action) = hot_corners
+            .bottom_right
+            .filter(|_| contains(Point::new(size.w - 1., size.h - 1.)))
+        {
+            return Some(action);
         }
 
-        false
+        if let Some(action) = hot_corners
+            .top_left
+            .filter(|_| contains(Point::new(0., 0.)))
+        {
+            return Some(action);
+        }
+
+        None
+    }
+
+    pub fn trigger_hot_corner(&mut self, action: HotCornerAction) {
+        match action {
+            HotCornerAction::Overview => self.layout.toggle_overview(),
+            HotCornerAction::GridOverview => self.layout.toggle_grid_overview(),
+        }
     }
 
     pub fn is_sticky_obscured_under(
@@ -3390,7 +3411,7 @@ impl Niri {
             return false;
         }
 
-        if self.is_inside_hot_corner(output, pos_within_output) {
+        if self.hot_corner_action(output, pos_within_output).is_some() {
             return true;
         }
 
@@ -3667,8 +3688,8 @@ impl Niri {
                 .or_else(|| layer_toplevel_under(Layer::Bottom))
                 .or_else(|| layer_toplevel_under(Layer::Background));
         } else {
-            if self.is_inside_hot_corner(output, pos_within_output) {
-                rv.hot_corner = true;
+            if let Some(action) = self.hot_corner_action(output, pos_within_output) {
+                rv.hot_corner = Some(action);
                 return rv;
             }
 

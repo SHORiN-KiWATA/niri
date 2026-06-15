@@ -69,6 +69,19 @@ input {
     // focus-follows-mouse max-scroll-amount="0%"
 }
 
+// Gesture configuration.
+// The top-left hot corner toggles the overview by default, and the bottom-left
+// hot corner toggles the grid overview by default.
+// gestures {
+//     hot-corners {
+//         // off
+//         top-left
+//         // top-right
+//         bottom-left { grid-overview; }
+//         // bottom-right
+//     }
+// }
+
 // You can configure outputs by their name, which you can find
 // by running `niri msg outputs` while inside a niri instance.
 // The built-in laptop monitor is usually called "eDP-1".
