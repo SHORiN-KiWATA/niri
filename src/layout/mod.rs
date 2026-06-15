@@ -5621,19 +5621,7 @@ impl<W: LayoutElement> Layout<W> {
         let Some(ws) = mon.workspaces.get_mut(mon.active_workspace_idx) else {
             return false;
         };
-        let Some(id) = ws.grid_focused_window_id() else {
-            return false;
-        };
-
-        if !ws.set_grid_focus_for_window(&id) {
-            return false;
-        }
-        if !ws.activate_window_from_grid(&id) {
-            return false;
-        }
-
-        ws.set_grid_focus_for_window(&id);
-        true
+        ws.activate_grid_focused_window_before_close()
     }
 
     pub fn toggle_grid_overview(&mut self) {

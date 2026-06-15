@@ -545,6 +545,22 @@ impl<W: LayoutElement> Workspace<W> {
         self.activate_window_from_grid(&id).then_some(id)
     }
 
+    pub(super) fn activate_grid_focused_window_before_close(&mut self) -> bool {
+        let Some(id) = self.grid_focused_window_id() else {
+            return false;
+        };
+
+        if !self.set_grid_focus_for_window(&id) {
+            return false;
+        }
+        if !self.activate_window_from_grid(&id) {
+            return false;
+        }
+
+        self.set_grid_focus_for_window(&id);
+        true
+    }
+
     pub(super) fn grid_window_visual_snapshots(&self) -> Vec<GridWindowVisual<W>> {
         if !self.is_grid_overview_open() {
             return Vec::new();

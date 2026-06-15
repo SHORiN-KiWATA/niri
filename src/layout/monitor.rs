@@ -1440,6 +1440,7 @@ impl<W: LayoutElement> Monitor<W> {
             }
         } else {
             for ws in &mut self.workspaces {
+                ws.activate_grid_focused_window_before_close();
                 ws.close_grid_overview();
             }
         }
