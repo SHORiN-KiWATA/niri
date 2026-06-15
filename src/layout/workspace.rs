@@ -477,7 +477,8 @@ impl<W: LayoutElement> Workspace<W> {
         true
     }
 
-    pub fn grid_navigate(&mut self, dir: GridDirection) {
+    pub fn grid_navigate(&mut self, dir: GridDirection) -> bool {
+        let previous = self.grid_focused_window_id();
         let tile_changed = self
             .grid_overview
             .as_mut()
@@ -494,6 +495,8 @@ impl<W: LayoutElement> Workspace<W> {
                 }
             }
         }
+
+        self.grid_focused_window_id() != previous
     }
 
     pub fn grid_focused_window_id(&self) -> Option<W::Id> {
@@ -562,6 +565,40 @@ impl<W: LayoutElement> Workspace<W> {
                 })
             })
             .collect()
+    }
+
+    pub(super) fn grid_window_visual_snapshots_for_closing_window(
+        &self,
+        window: &W::Id,
+    ) -> Vec<GridWindowVisual<W>> {
+        if !self.is_grid_overview_open() {
+            return Vec::new();
+        }
+
+        let Some(item) = self.grid_item_for_window(window) else {
+            return Vec::new();
+        };
+        let Some(tile_count) = self.grid_item_column_tile_count(&item) else {
+            return Vec::new();
+        };
+        if tile_count <= 1 {
+            return Vec::new();
+        }
+
+        self.grid_window_visual_snapshots()
+    }
+
+    pub(super) fn grid_window_close_preserves_move_animations(&self, window: &W::Id) -> bool {
+        if !self.is_grid_overview_open() {
+            return false;
+        }
+
+        let Some(item) = self.grid_item_for_window(window) else {
+            return false;
+        };
+
+        self.grid_item_column_tile_count(&item)
+            .is_some_and(|count| count > 1)
     }
 
     fn grid_item_column_tile_count(&self, item: &GridItem<W>) -> Option<usize> {
@@ -665,20 +702,26 @@ impl<W: LayoutElement> Workspace<W> {
         }
     }
 
-    pub fn on_window_closed_in_grid(&mut self) {
+    pub(super) fn on_window_closed_in_grid(
+        &mut self,
+        window_visual_snapshots: Vec<GridWindowVisual<W>>,
+        stop_move_animations: bool,
+    ) {
         let previous_focus = self.grid_focused_window_id();
-        if self.is_grid_overview_open() {
+        if stop_move_animations && self.is_grid_overview_open() {
             self.scrolling.stop_move_animations();
         }
         self.recompute_grid_overview_layout(true);
 
         if let Some(id) = previous_focus {
             if self.set_grid_focus_for_window(&id) {
+                self.set_grid_window_transition_starts(window_visual_snapshots);
                 return;
             }
         }
 
         self.sync_grid_focus_to_active_window();
+        self.set_grid_window_transition_starts(window_visual_snapshots);
     }
 
     pub fn on_window_added_in_grid(&mut self, id: &W::Id) {
@@ -722,10 +765,6 @@ impl<W: LayoutElement> Workspace<W> {
             self.grid_overview = Some(go);
             return;
         }
-        if items.is_empty() {
-            return;
-        }
-
         go.compute_layout(&items, working_area, restart_rearrange);
 
         // Sync column_tile_focus with new layout.

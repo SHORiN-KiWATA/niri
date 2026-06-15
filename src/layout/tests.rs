@@ -4336,6 +4336,30 @@ fn grid_closing_focused_first_column_focuses_right() {
 }
 
 #[test]
+fn grid_closing_whole_column_uses_entry_rearrange() {
+    let mut layout = three_column_grid_layout(1);
+    check_ops_on_layout(&mut layout, [Op::ToggleGridOverview]);
+    assert_eq!(layout.grid_focused_window_id(), Some(1));
+
+    check_ops_on_layout(&mut layout, [Op::CloseWindow(1)]);
+    layout.verify_invariants();
+
+    let go = layout
+        .active_workspace()
+        .and_then(|ws| ws.grid_overview())
+        .unwrap();
+    assert!(go.window_transition_starts.is_empty());
+    let has_column_move_offset = layout
+        .active_workspace()
+        .unwrap()
+        .scrolling()
+        .columns()
+        .any(|col| col.render_offset().x.abs() > 0.001 || col.render_offset().y.abs() > 0.001);
+    assert!(!has_column_move_offset);
+    assert_eq!(layout.grid_focused_window_id(), Some(2));
+}
+
+#[test]
 fn grid_closing_focused_middle_column_focuses_right() {
     let mut layout = three_column_grid_layout(1);
     check_ops_on_layout(&mut layout, [Op::ToggleGridOverview]);
@@ -4363,6 +4387,27 @@ fn grid_closing_focused_last_column_focuses_left() {
 
     assert!(layout.is_grid_overview_open());
     assert_eq!(layout.grid_focused_window_id(), Some(2));
+}
+
+#[test]
+fn grid_closing_last_window_keeps_empty_grid_open_for_close_animation() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::ToggleOverview,
+        Op::ToggleGridOverview,
+    ]);
+    assert!(layout.is_overview_open());
+    assert!(layout.is_grid_overview_open());
+    assert_eq!(layout.grid_focused_window_id(), Some(1));
+
+    check_ops_on_layout(&mut layout, [Op::CloseWindow(1)]);
+
+    assert!(layout.is_overview_open());
+    assert!(layout.is_grid_overview_open());
+    assert_eq!(layout.grid_focused_window_id(), None);
 }
 
 #[test]
@@ -4728,6 +4773,36 @@ fn grid_move_window_up_preserves_tile_move_animation() {
 }
 
 #[test]
+fn grid_close_top_window_preserves_lower_tile_move_animation() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::ConsumeOrExpelWindowLeft { id: None },
+        Op::FocusWindow(1),
+        Op::ToggleGridOverview,
+    ]);
+
+    assert_eq!(scrolling_column_ids(&layout), vec![vec![1, 2]]);
+    assert_eq!(layout.grid_focused_window_id(), Some(1));
+
+    let before = grid_window_visual_rect(&layout, 2);
+
+    check_ops_on_layout(&mut layout, [Op::CloseWindow(1)]);
+    layout.verify_invariants();
+
+    assert_eq!(scrolling_column_ids(&layout), vec![vec![2]]);
+    let after = grid_window_visual_rect(&layout, 2);
+
+    approx::assert_abs_diff_eq!(after.loc.x, before.loc.x, epsilon = 0.001);
+    approx::assert_abs_diff_eq!(after.loc.y, before.loc.y, epsilon = 0.001);
+}
+
+#[test]
 fn grid_focus_window_down_or_output_navigates_focused_column_tile() {
     let mut layout = check_ops([
         Op::AddOutput(1),
@@ -4783,6 +4858,33 @@ fn grid_focus_window_down_or_output_navigates_focused_column_tile() {
             .map(|window| *window.id()),
         Some(1)
     );
+}
+
+#[test]
+fn grid_focus_window_or_workspace_down_prefers_grid_then_workspace() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::ConsumeOrExpelWindowLeft { id: None },
+        Op::FocusWindow(1),
+        Op::ToggleGridOverview,
+    ]);
+
+    assert!(layout.is_grid_overview_open());
+    assert_eq!(layout.grid_focused_window_id(), Some(1));
+
+    layout.focus_window_or_workspace_down();
+    layout.verify_invariants();
+    assert_eq!(layout.grid_focused_window_id(), Some(2));
+
+    layout.focus_window_or_workspace_up();
+    layout.verify_invariants();
+    assert_eq!(layout.grid_focused_window_id(), Some(1));
 }
 
 #[test]

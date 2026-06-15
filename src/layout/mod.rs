@@ -1176,6 +1176,10 @@ impl<W: LayoutElement> Layout<W> {
                 for mon in monitors {
                     for (idx, ws) in mon.workspaces.iter_mut().enumerate() {
                         if ws.has_window(window) {
+                            let preserve_move_animations =
+                                ws.grid_window_close_preserves_move_animations(window);
+                            let window_visual_snapshots =
+                                ws.grid_window_visual_snapshots_for_closing_window(window);
                             if ws.is_grid_overview_open()
                                 && ws.grid_focused_window_id().as_ref() == Some(window)
                             {
@@ -1183,7 +1187,10 @@ impl<W: LayoutElement> Layout<W> {
                             }
 
                             let removed = ws.remove_tile(window, transaction);
-                            ws.on_window_closed_in_grid();
+                            ws.on_window_closed_in_grid(
+                                window_visual_snapshots,
+                                !preserve_move_animations,
+                            );
 
                             // Clean up empty workspaces that are not active and not last.
                             if !ws.has_windows_or_name()
@@ -1217,6 +1224,10 @@ impl<W: LayoutElement> Layout<W> {
             MonitorSet::NoOutputs { workspaces, .. } => {
                 for (idx, ws) in workspaces.iter_mut().enumerate() {
                     if ws.has_window(window) {
+                        let preserve_move_animations =
+                            ws.grid_window_close_preserves_move_animations(window);
+                        let window_visual_snapshots =
+                            ws.grid_window_visual_snapshots_for_closing_window(window);
                         if ws.is_grid_overview_open()
                             && ws.grid_focused_window_id().as_ref() == Some(window)
                         {
@@ -1224,7 +1235,10 @@ impl<W: LayoutElement> Layout<W> {
                         }
 
                         let removed = ws.remove_tile(window, transaction);
-                        ws.on_window_closed_in_grid();
+                        ws.on_window_closed_in_grid(
+                            window_visual_snapshots,
+                            !preserve_move_animations,
+                        );
 
                         // Clean up empty workspaces.
                         if !ws.has_windows_or_name() {

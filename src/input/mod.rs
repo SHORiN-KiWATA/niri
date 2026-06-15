@@ -632,9 +632,17 @@ impl State {
 
                 if matches!(res, FilterResult::Forward) {
                     // If we didn't find any bind, try other hardcoded keys.
-                    if this.niri.keyboard_focus.is_overview() && pressed {
-                        if let Some(bind) = raw.and_then(|raw| hardcoded_overview_bind(raw, *mods))
-                        {
+                    if pressed {
+                        let hardcoded_bind = raw.and_then(|raw| {
+                            hardcoded_grid_or_overview_bind(
+                                raw,
+                                *mods,
+                                is_grid_overview_open,
+                                &this.niri.keyboard_focus,
+                            )
+                        });
+
+                        if let Some(bind) = hardcoded_bind {
                             this.niri.suppressed_keys.insert(key_code);
                             return FilterResult::Intercept(Some(bind));
                         }
@@ -2986,6 +2994,21 @@ impl State {
             self.niri.tablet_cursor_location = None;
 
             let is_overview_open = self.niri.layout.is_overview_open();
+            let is_grid_overview_open = self.niri.layout.is_grid_overview_open();
+
+            if should_close_window_on_middle_click(
+                button,
+                is_grid_overview_open,
+                is_overview_open,
+                pointer.is_grabbed(),
+                mod_down,
+            ) {
+                if let Some(mapped) = self.niri.window_under_cursor() {
+                    mapped.toplevel().send_close();
+                    self.niri.suppressed_buttons.insert(button_code);
+                    return;
+                }
+            }
 
             if is_overview_open && !pointer.is_grabbed() && button == Some(MouseButton::Right) {
                 if let Some((output, ws)) = self.niri.workspace_under_cursor(true) {
@@ -5149,6 +5172,34 @@ fn grid_should_handle_workspace_wheel(
         && !has_wheel_binds
 }
 
+fn should_close_window_on_middle_click(
+    button: Option<MouseButton>,
+    is_grid_overview_open: bool,
+    is_overview_open: bool,
+    pointer_is_grabbed: bool,
+    mod_down: bool,
+) -> bool {
+    button == Some(MouseButton::Middle)
+        && !pointer_is_grabbed
+        && !mod_down
+        && (is_grid_overview_open || is_overview_open)
+}
+
+fn hardcoded_grid_or_overview_bind(
+    raw: Keysym,
+    mods: ModifiersState,
+    is_grid_overview_open: bool,
+    keyboard_focus: &KeyboardFocus,
+) -> Option<Bind> {
+    if is_grid_overview_open && (keyboard_focus.is_layout() || keyboard_focus.is_overview()) {
+        hardcoded_grid_overview_bind(raw, mods)
+    } else if keyboard_focus.is_overview() {
+        hardcoded_overview_bind(raw, mods)
+    } else {
+        None
+    }
+}
+
 fn hardcoded_overview_bind(raw: Keysym, mods: ModifiersState) -> Option<Bind> {
     let mods = modifiers_from_state(mods);
     if !mods.is_empty() {
@@ -5165,6 +5216,10 @@ fn hardcoded_overview_bind(raw: Keysym, mods: ModifiersState) -> Option<Bind> {
         Keysym::Right => Action::FocusColumnRight,
         Keysym::Up => Action::FocusWindowOrWorkspaceUp,
         Keysym::Down => Action::FocusWindowOrWorkspaceDown,
+        Keysym::h => Action::FocusColumnLeft,
+        Keysym::l => Action::FocusColumnRight,
+        Keysym::k => Action::FocusWindowOrWorkspaceUp,
+        Keysym::j => Action::FocusWindowOrWorkspaceDown,
         _ => {
             return None;
         }
@@ -5180,6 +5235,34 @@ fn hardcoded_overview_bind(raw: Keysym, mods: ModifiersState) -> Option<Bind> {
         cooldown: None,
         allow_when_locked: false,
         allow_inhibiting: false,
+        hotkey_overlay_title: None,
+    })
+}
+
+fn hardcoded_grid_overview_bind(raw: Keysym, mods: ModifiersState) -> Option<Bind> {
+    let mods = modifiers_from_state(mods);
+    if !mods.is_empty() {
+        return None;
+    }
+
+    let action = match raw {
+        Keysym::h => Action::FocusColumnLeft,
+        Keysym::l => Action::FocusColumnRight,
+        Keysym::k => Action::FocusWindowOrWorkspaceUp,
+        Keysym::j => Action::FocusWindowOrWorkspaceDown,
+        _ => return None,
+    };
+
+    Some(Bind {
+        key: Key {
+            trigger: Trigger::Keysym(raw),
+            modifiers: Modifiers::empty(),
+        },
+        action,
+        repeat: true,
+        cooldown: None,
+        allow_when_locked: false,
+        allow_inhibiting: true,
         hotkey_overlay_title: None,
     })
 }
@@ -5849,6 +5932,109 @@ mod tests {
             false,
             Modifiers::empty(),
             true,
+        ));
+    }
+
+    #[test]
+    fn grid_and_overview_hjkl_are_hardcoded_focus_binds() {
+        let no_mods = ModifiersState::default();
+        let with_mod = ModifiersState {
+            logo: true,
+            ..Default::default()
+        };
+        let overview_focus = KeyboardFocus::Overview;
+
+        assert!(matches!(
+            hardcoded_grid_overview_bind(Keysym::h, no_mods).map(|bind| bind.action),
+            Some(Action::FocusColumnLeft)
+        ));
+        assert!(matches!(
+            hardcoded_grid_overview_bind(Keysym::j, no_mods).map(|bind| bind.action),
+            Some(Action::FocusWindowOrWorkspaceDown)
+        ));
+        assert!(matches!(
+            hardcoded_grid_overview_bind(Keysym::k, no_mods).map(|bind| bind.action),
+            Some(Action::FocusWindowOrWorkspaceUp)
+        ));
+        assert!(matches!(
+            hardcoded_grid_overview_bind(Keysym::l, no_mods).map(|bind| bind.action),
+            Some(Action::FocusColumnRight)
+        ));
+        assert!(hardcoded_grid_overview_bind(Keysym::h, with_mod).is_none());
+
+        assert!(matches!(
+            hardcoded_overview_bind(Keysym::h, no_mods).map(|bind| bind.action),
+            Some(Action::FocusColumnLeft)
+        ));
+        assert!(matches!(
+            hardcoded_overview_bind(Keysym::j, no_mods).map(|bind| bind.action),
+            Some(Action::FocusWindowOrWorkspaceDown)
+        ));
+        assert!(matches!(
+            hardcoded_overview_bind(Keysym::k, no_mods).map(|bind| bind.action),
+            Some(Action::FocusWindowOrWorkspaceUp)
+        ));
+        assert!(matches!(
+            hardcoded_overview_bind(Keysym::l, no_mods).map(|bind| bind.action),
+            Some(Action::FocusColumnRight)
+        ));
+        assert!(hardcoded_overview_bind(Keysym::h, with_mod).is_none());
+
+        assert!(matches!(
+            hardcoded_grid_or_overview_bind(Keysym::j, no_mods, true, &overview_focus)
+                .map(|bind| bind.action),
+            Some(Action::FocusWindowOrWorkspaceDown)
+        ));
+        assert!(matches!(
+            hardcoded_grid_or_overview_bind(Keysym::k, no_mods, true, &overview_focus)
+                .map(|bind| bind.action),
+            Some(Action::FocusWindowOrWorkspaceUp)
+        ));
+    }
+
+    #[test]
+    fn middle_click_close_is_limited_to_grid_and_overview() {
+        assert!(should_close_window_on_middle_click(
+            Some(MouseButton::Middle),
+            true,
+            false,
+            false,
+            false,
+        ));
+        assert!(should_close_window_on_middle_click(
+            Some(MouseButton::Middle),
+            false,
+            true,
+            false,
+            false,
+        ));
+        assert!(!should_close_window_on_middle_click(
+            Some(MouseButton::Middle),
+            false,
+            false,
+            false,
+            false,
+        ));
+        assert!(!should_close_window_on_middle_click(
+            Some(MouseButton::Middle),
+            true,
+            false,
+            true,
+            false,
+        ));
+        assert!(!should_close_window_on_middle_click(
+            Some(MouseButton::Middle),
+            true,
+            false,
+            false,
+            true,
+        ));
+        assert!(!should_close_window_on_middle_click(
+            Some(MouseButton::Left),
+            true,
+            false,
+            false,
+            false,
         ));
     }
 

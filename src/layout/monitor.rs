@@ -10,6 +10,7 @@ use smithay::backend::renderer::element::utils::{
 use smithay::output::Output;
 use smithay::utils::{Logical, Point, Rectangle, Size};
 
+use super::grid_overview::GridDirection;
 use super::insert_hint_element::{InsertHintElement, InsertHintRenderElement};
 use super::scrolling::{Column, ColumnWidth};
 use super::tile::Tile;
@@ -792,13 +793,23 @@ impl<W: LayoutElement> Monitor<W> {
     }
 
     pub fn focus_window_or_workspace_down(&mut self) {
-        if !self.active_workspace().focus_down() {
+        let grid_open = self.active_workspace_ref().is_grid_overview_open();
+        if grid_open {
+            if !self.active_workspace().grid_navigate(GridDirection::Down) {
+                self.switch_workspace_down();
+            }
+        } else if !self.active_workspace().focus_down() {
             self.switch_workspace_down();
         }
     }
 
     pub fn focus_window_or_workspace_up(&mut self) {
-        if !self.active_workspace().focus_up() {
+        let grid_open = self.active_workspace_ref().is_grid_overview_open();
+        if grid_open {
+            if !self.active_workspace().grid_navigate(GridDirection::Up) {
+                self.switch_workspace_up();
+            }
+        } else if !self.active_workspace().focus_up() {
             self.switch_workspace_up();
         }
     }
