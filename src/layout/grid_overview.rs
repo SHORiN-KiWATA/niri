@@ -925,16 +925,24 @@ impl<W: LayoutElement> GridLayout<W> {
         let fill_scale = fill_scale_for_width.min(fill_scale_for_height);
 
         if fill_scale.is_finite() && fill_scale != 1. {
-            row_content_widths.fill(0.);
-            row_heights.fill(0.);
-
-            for (row, _, target_size, target_scale) in &mut entry_sizes {
+            for (_, _, target_size, target_scale) in &mut entry_sizes {
                 *target_size = target_size.upscale(fill_scale);
                 *target_scale *= fill_scale;
-
-                row_content_widths[*row] += target_size.w;
-                row_heights[*row] = row_heights[*row].max(target_size.h);
             }
+        }
+
+        row_content_widths.fill(0.);
+        row_heights.fill(0.);
+        for ((item, in_size), (row, _, target_size, target_scale)) in
+            entries.iter().zip(&mut entry_sizes)
+        {
+            if matches!(item, GridItem::Floating { .. }) && *target_scale > 1. {
+                *target_scale = 1.;
+                *target_size = *in_size;
+            }
+
+            row_content_widths[*row] += target_size.w;
+            row_heights[*row] = row_heights[*row].max(target_size.h);
         }
 
         let packed_h = row_heights.iter().sum::<f64>() + gap * (rows - 1) as f64;

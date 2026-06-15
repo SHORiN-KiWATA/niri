@@ -3814,7 +3814,7 @@ fn grid_overview_floating_uses_blended_tiling_scale_when_mixed() {
 }
 
 #[test]
-fn grid_overview_allows_single_floating_window_to_use_independent_scale() {
+fn grid_overview_does_not_upscale_single_floating_window() {
     let mut floating = TestWindowParams::new(1);
     floating.is_floating = true;
 
@@ -3830,12 +3830,12 @@ fn grid_overview_allows_single_floating_window_to_use_independent_scale() {
         .unwrap();
     let (item, info) = go.layout.entries.first().unwrap();
 
-    assert!(info.target_scale > 1.);
+    approx::assert_abs_diff_eq!(info.target_scale, 1., epsilon = 0.001);
     assert!(go.entry_focus_boost(item, info) > 1.);
 }
 
 #[test]
-fn grid_overview_allows_mixed_floating_window_to_use_blended_scale() {
+fn grid_overview_does_not_upscale_mixed_floating_window() {
     let mut floating = TestWindowParams::new(2);
     floating.is_floating = true;
 
@@ -3860,7 +3860,7 @@ fn grid_overview_allows_mixed_floating_window_to_use_blended_scale() {
         .find(|(item, _)| item.window_id() == &2)
         .unwrap();
 
-    assert!(info.target_scale > 1.);
+    assert!(info.target_scale <= 1.);
     assert!(go.entry_focus_boost(item, info) > 1.);
 }
 
