@@ -3122,6 +3122,20 @@ impl State {
                         self.niri
                             .cursor_manager
                             .set_cursor_image(CursorImageStatus::Named(icon));
+
+                        // Notify smithay about the button press so that pressed_buttons is
+                        // updated, allowing the grab to correctly detect when the initiating
+                        // button is released.
+                        pointer.button(
+                            self,
+                            &ButtonEvent {
+                                button: button_code,
+                                state: button_state,
+                                serial,
+                                time: event.time_msec(),
+                            },
+                        );
+                        pointer.frame(self);
                     }
                     return;
                 }
