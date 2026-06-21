@@ -229,8 +229,8 @@ The following options are available inside `shake-to-enlarge`:
 
 - `off` — disable the feature.
 - `on` — explicitly enable the feature (useful to re-enable after overriding from an included configuration).
-- `zoom-factor` — how much to enlarge the cursor. Defaults to `3.0`.
-- `hold-duration-ms` — how long the cursor stays enlarged after you stop shaking, in milliseconds. Defaults to `1200`.
+- `zoom-factor` — how much to enlarge the cursor. Defaults to `5.0`.
+- `hold-duration-ms` — how long the cursor stays enlarged after you stop shaking, in milliseconds. Defaults to `1500`.
 - `threshold` — the shake energy threshold. Higher values make it harder to trigger. Defaults to `2000.0`.
 - `grow` — when enabled, continuing to shake while already enlarged will make the cursor grow increasingly larger with no upper limit. Defaults to `false`.
 - `grow-speed` — how much the zoom increases per shake trigger while already enlarged. Defaults to `0.01`. Only effective when `grow` is enabled.

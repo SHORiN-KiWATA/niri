@@ -37,8 +37,8 @@ impl Default for ShakeToEnlarge {
     fn default() -> Self {
         Self {
             off: false,
-            zoom_factor: 3.0,
-            hold_duration_ms: 1200,
+            zoom_factor: 5.0,
+            hold_duration_ms: 1500,
             threshold: 2000.0,
             grow: false,
             grow_speed: 0.01,
@@ -289,7 +289,7 @@ impl GridOverviewPadding {
 
 impl Default for GridOverviewPadding {
     fn default() -> Self {
-        Self::uniform(100.)
+        Self::uniform(80.)
     }
 }
 

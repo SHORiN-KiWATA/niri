@@ -419,6 +419,10 @@ binds {
     // or do a four-finger swipe up on a touchpad.
     Mod+O repeat=false { toggle-overview; }
 
+    // Tap Mod (press and release without pressing any other key in between)
+    // to toggle the grid overview: a view of all windows on the current workspaces.
+    Mod repeat=false { toggle-grid-overview; }
+
     Mod+Q repeat=false { close-window; }
 
     Mod+Left  { focus-column-left; }

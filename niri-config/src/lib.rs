@@ -1559,8 +1559,8 @@ mod tests {
                 shake_to_enlarge: Some(
                     ShakeToEnlarge {
                         off: false,
-                        zoom_factor: 3.0,
-                        hold_duration_ms: 1200,
+                        zoom_factor: 5.0,
+                        hold_duration_ms: 1500,
                         threshold: 2000.0,
                         grow: false,
                         grow_speed: 0.01,
@@ -1815,10 +1815,10 @@ mod tests {
             grid_overview: GridOverview {
                 gap: 16.0,
                 padding: GridOverviewPadding {
-                    left: 100.0,
-                    right: 100.0,
-                    top: 100.0,
-                    bottom: 100.0,
+                    left: 80.0,
+                    right: 80.0,
+                    top: 80.0,
+                    bottom: 80.0,
                 },
                 min_scale: 0.08,
                 focused_column_scale: 1.04,
