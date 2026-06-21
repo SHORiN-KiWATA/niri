@@ -157,6 +157,7 @@ impl State {
 
         if should_cancel_pending_modifier_bind(&event) {
             self.niri.pending_modifier_bind = None;
+            self.niri.pending_default_mod_tap = None;
         }
 
         let mut consumed_by_a11y = false;
@@ -473,6 +474,13 @@ impl State {
                         &mut this.niri.pending_modifier_bind,
                         key_code,
                     );
+                    if this
+                        .niri
+                        .pending_default_mod_tap
+                        .is_some_and(|pending| pending != key_code)
+                    {
+                        this.niri.pending_default_mod_tap = None;
+                    }
                 }
 
                 // After updating XKB state from accessibility-grabbed keys, return right away and
@@ -530,6 +538,17 @@ impl State {
                             &this.niri.screenshot_ui,
                             is_inhibiting_shortcuts,
                         );
+
+                        // If no config bind was found for this modifier tap, and this is the
+                        // mod key, track it as a potential default mod tap (for grid-overview).
+                        if this.niri.pending_modifier_bind.is_none()
+                            && modifier_from_keysym(raw) == Some(mod_key.to_modifiers())
+                            && config.grid_overview.default_mod_action
+                            && !this.niri.screenshot_ui.is_open()
+                            && !is_inhibiting_shortcuts
+                        {
+                            this.niri.pending_default_mod_tap = Some(key_code);
+                        }
                     } else if !pressed
                         && this
                             .niri
@@ -543,6 +562,15 @@ impl State {
                             key_code,
                             is_inhibiting_shortcuts,
                         );
+                    } else if !pressed
+                        && this
+                            .niri
+                            .pending_default_mod_tap
+                            .is_some_and(|pending_key| pending_key == key_code)
+                    {
+                        this.niri.pending_default_mod_tap = None;
+                        this.do_action(Action::ToggleGridOverview, false);
+                        return FilterResult::Intercept(None);
                     }
                 }
 
