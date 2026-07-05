@@ -3024,12 +3024,15 @@ impl State {
             let is_overview_open = self.niri.layout.is_overview_open();
             let is_grid_overview_open = self.niri.layout.is_grid_overview_open();
 
+            let magnifier_can_drag = self.niri.can_drag_magnifier_center();
+
             if should_close_window_on_middle_click(
                 button,
                 is_grid_overview_open,
                 is_overview_open,
                 pointer.is_grabbed(),
                 mod_down,
+                magnifier_can_drag,
             ) {
                 if let Some(mapped) = self.niri.window_under_cursor() {
                     mapped.toplevel().send_close();
@@ -3069,7 +3072,7 @@ impl State {
             if button == Some(MouseButton::Middle)
                 && !pointer.is_grabbed()
                 && !mod_down
-                && self.niri.can_drag_magnifier_center()
+                && magnifier_can_drag
             {
                 let location = pointer.current_location();
                 if let Some((output, start_center)) =
@@ -5262,11 +5265,13 @@ fn should_close_window_on_middle_click(
     is_overview_open: bool,
     pointer_is_grabbed: bool,
     mod_down: bool,
+    magnifier_can_drag: bool,
 ) -> bool {
     button == Some(MouseButton::Middle)
         && !pointer_is_grabbed
         && !mod_down
         && (is_grid_overview_open || is_overview_open)
+        && !magnifier_can_drag
 }
 
 fn hardcoded_grid_or_overview_bind(
