@@ -1847,6 +1847,13 @@ unsafe fn mark_buffer_after_render(
         // Clear the corrupted flag we may have set before.
         (*header).flags = 0;
         (*header).seq = *sequence;
+
+        // Set buffer timestamp as unknown.
+        //
+        // FIXME: we could try passing real presentation timestamps for rendered frames here.
+        // However, then we must also ensure that the time base never jumps (e.g. when switching a
+        // dynamic cast between outputs) as this would mess up the timing downstream.
+        (*header).pts = -1;
     }
 }
 
