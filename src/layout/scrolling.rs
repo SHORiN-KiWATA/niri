@@ -1164,6 +1164,24 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         column_idx: usize,
         anim_config: Option<niri_config::Animation>,
     ) -> Column<W> {
+        let focus_left_refill = anim_config.is_none()
+            && !self.view_offset.is_gesture()
+            && self.columns[column_idx].sizing_mode().is_normal()
+            && column_idx == self.active_column_idx
+            && 0 < column_idx
+            && column_idx + 1 < self.columns.len()
+            && {
+                let view_x = self.target_view_pos();
+                let area = self.working_area;
+                let visible_width = |idx| {
+                    let left = self.column_x(idx) - view_x;
+                    let right = left + self.data[idx].width;
+                    (right.min(area.loc.x + area.size.w) - left.max(area.loc.x)).max(0.)
+                };
+
+                visible_width(column_idx - 1) < visible_width(column_idx + 1)
+            };
+
         // Animate movement of the other columns.
         let movement_config = anim_config.unwrap_or(self.options.animations.window_movement.0);
         let offset = self.column_x(column_idx + 1) - self.column_x(column_idx);
@@ -1236,10 +1254,13 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                 );
             }
         } else {
-            self.activate_column_with_anim_config(
-                min(self.active_column_idx, self.columns.len() - 1),
-                view_config,
-            );
+            let target_idx = min(self.active_column_idx, self.columns.len() - 1);
+            if focus_left_refill {
+                // Reveal the left neighbor on the same timeline as the columns closing the gap.
+                self.activate_column_with_anim_config(target_idx - 1, movement_config);
+            } else {
+                self.activate_column_with_anim_config(target_idx, view_config);
+            }
         }
 
         column
@@ -2086,7 +2107,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             source_column_idx,
             source_tile_idx,
             transaction.clone(),
-            None,
+            Some(self.options.animations.window_movement.0),
         );
 
         {
