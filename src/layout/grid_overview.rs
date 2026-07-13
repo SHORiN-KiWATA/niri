@@ -183,6 +183,7 @@ impl<W: LayoutElement> GridOverview<W> {
         restart_rearrange: bool,
     ) {
         let old_layout = self.layout.clone();
+        let new_layout = GridLayout::compute(items, area, &self.options.grid_overview);
         let progress_value = self.progress_value();
         let rearrange_value = self.rearrange_anim.as_ref().map(|anim| anim.value());
         let opening_retarget_value = if self.open
@@ -195,7 +196,12 @@ impl<W: LayoutElement> GridOverview<W> {
             None
         };
         let should_rearrange = self.open && !old_layout.entries.is_empty();
-        let restart_rearrange = should_rearrange && restart_rearrange;
+        let targets_changed = old_layout.entries.len() != new_layout.entries.len()
+            || new_layout.entries.iter().any(|(item, info)| {
+                Self::matching_value(&old_layout.entries, item)
+                    .is_none_or(|old_info| !old_info.same_target(info))
+            });
+        let restart_rearrange = should_rearrange && restart_rearrange && targets_changed;
         if restart_rearrange {
             self.rearrange_anim = Some(Animation::new(
                 self.clock.clone(),
@@ -205,11 +211,13 @@ impl<W: LayoutElement> GridOverview<W> {
                 self.options.animations.window_movement.0,
             ));
         }
-        self.layout = GridLayout::compute(items, area, &self.options.grid_overview);
+        self.layout = new_layout;
         let mut new_entries = Vec::new();
         for (item, info) in &self.layout.entries {
             let old_info = Self::matching_value(&old_layout.entries, item);
             let entry_pos = Self::matching_value(&self.entry_positions, item).copied();
+            let position_target_unchanged =
+                old_info.is_some_and(|old_info| old_info.same_position_target(info));
             let current_pos = match (rearrange_value, entry_pos, old_info) {
                 (Some(value), Some(entry), Some(old_info)) => {
                     Self::lerp_point(entry, old_info.target_pos, value)
@@ -223,6 +231,9 @@ impl<W: LayoutElement> GridOverview<W> {
                     .unwrap_or(info.target_pos),
             };
             let pos = match (rearrange_value, opening_retarget_value, entry_pos, old_info) {
+                (_, _, Some(entry), Some(_)) if !restart_rearrange && position_target_unchanged => {
+                    entry
+                }
                 (Some(value), _, Some(_), Some(_)) if !restart_rearrange => {
                     Self::retarget_point(current_pos, info.target_pos, value)
                 }
@@ -238,6 +249,8 @@ impl<W: LayoutElement> GridOverview<W> {
         for (item, info) in &self.layout.entries {
             let old_info = Self::matching_value(&old_layout.entries, item);
             let entry_scale = Self::matching_value(&self.entry_scales, item).copied();
+            let scale_target_unchanged =
+                old_info.is_some_and(|old_info| old_info.same_scale_target(info));
             let current_scale = match (rearrange_value, entry_scale, old_info) {
                 (Some(value), Some(entry), Some(old_info)) => {
                     entry + (old_info.target_scale - entry) * value
@@ -256,6 +269,9 @@ impl<W: LayoutElement> GridOverview<W> {
                 entry_scale,
                 old_info,
             ) {
+                (_, _, Some(entry), Some(_)) if !restart_rearrange && scale_target_unchanged => {
+                    entry
+                }
                 (Some(value), _, Some(_), Some(_)) if !restart_rearrange => {
                     Self::retarget_value(current_scale, info.target_scale, value)
                 }
@@ -1032,4 +1048,30 @@ pub struct GridEntryInfo {
     pub target_pos: Point<f64, Logical>,
     pub target_size: Size<f64, Logical>,
     pub target_scale: f64,
+}
+
+impl GridEntryInfo {
+    fn same_position_target(&self, other: &Self) -> bool {
+        const EPSILON: f64 = 0.000001;
+
+        (self.target_pos.x - other.target_pos.x).abs() <= EPSILON
+            && (self.target_pos.y - other.target_pos.y).abs() <= EPSILON
+    }
+
+    fn same_scale_target(&self, other: &Self) -> bool {
+        const EPSILON: f64 = 0.000001;
+
+        (self.target_scale - other.target_scale).abs() <= EPSILON
+    }
+
+    fn same_target(&self, other: &Self) -> bool {
+        const EPSILON: f64 = 0.000001;
+
+        self.row == other.row
+            && self.col == other.col
+            && self.same_position_target(other)
+            && (self.target_size.w - other.target_size.w).abs() <= EPSILON
+            && (self.target_size.h - other.target_size.h).abs() <= EPSILON
+            && self.same_scale_target(other)
+    }
 }

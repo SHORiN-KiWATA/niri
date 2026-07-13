@@ -1412,6 +1412,25 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         column_idx: usize,
         anim_config: Option<niri_config::Animation>,
     ) -> Column<W> {
+        let view_config = anim_config.unwrap_or(self.options.animations.horizontal_view_movement.0);
+        let has_neighbors_on_both_sides = column_idx == self.active_column_idx
+            && 0 < column_idx
+            && column_idx + 1 < self.columns.len();
+        // Focus whichever neighbor is entering to refill the view.
+        let focus_left_refill = has_neighbors_on_both_sides && {
+            let view_x = self.target_view_pos();
+            let working_x = self.working_area.loc.x;
+            let working_right = working_x + self.working_area.size.w;
+            let visible_width = |idx| {
+                let col_x = self.column_x(idx);
+                let col_left = col_x - view_x;
+                let col_right = col_left + self.data[idx].width;
+                (col_right.min(working_right) - col_left.max(working_x)).max(0.)
+            };
+
+            visible_width(column_idx - 1) < visible_width(column_idx + 1)
+        };
+
         // Animate movement of the other columns.
         let movement_config = anim_config.unwrap_or(self.options.animations.window_movement.0);
         let offset = self.column_x(column_idx + 1) - self.column_x(column_idx);
@@ -1453,8 +1472,6 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             return column;
         }
 
-        let view_config = anim_config.unwrap_or(self.options.animations.horizontal_view_movement.0);
-
         if column_idx < self.active_column_idx {
             // A column to the left was removed; preserve the current position.
             // FIXME: preserve activate_prev_column_on_removal.
@@ -1484,10 +1501,28 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                 );
             }
         } else {
-            self.activate_column_with_anim_config(
-                min(self.active_column_idx, self.columns.len() - 1),
-                view_config,
-            );
+            let target_idx = min(self.active_column_idx, self.columns.len() - 1);
+            if focus_left_refill {
+                // The view reveals the left neighbor while the right-hand columns close the gap.
+                // Use one timeline so those movements cancel in screen space.
+                self.activate_column_with_anim_config(target_idx - 1, movement_config);
+            } else if column_idx == self.active_column_idx && target_idx == column_idx {
+                // The right-hand successor inherited the removed active column's index. Use the
+                // surviving left neighbor as the source; otherwise same-index activation keeps
+                // the viewport anchored to the removed column.
+                let previous_idx = target_idx.checked_sub(1);
+                let previous_view_pos = previous_idx.map(|idx| {
+                    self.column_x(idx) - self.options.layout.gaps - self.working_area.loc.x
+                });
+                self.activate_column_with_source_and_anim_config(
+                    target_idx,
+                    previous_idx,
+                    previous_view_pos,
+                    view_config,
+                );
+            } else {
+                self.activate_column_with_anim_config(target_idx, view_config);
+            }
         }
 
         column

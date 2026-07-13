@@ -4773,6 +4773,53 @@ fn grid_move_window_up_preserves_tile_move_animation() {
 }
 
 #[test]
+fn grid_move_window_within_column_does_not_rearrange_unchanged_entries() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::ConsumeOrExpelWindowLeft { id: None },
+        Op::AddWindow {
+            params: TestWindowParams::new(3),
+        },
+        Op::FocusWindow(1),
+        Op::ToggleGridOverview,
+        Op::CompleteAnimations,
+    ]);
+    layout.focus_down();
+    check_ops_on_layout(&mut layout, [Op::CompleteAnimations]);
+
+    let before_3 = layout
+        .active_workspace()
+        .unwrap()
+        .grid_window_visual_transform(&3)
+        .unwrap();
+
+    layout.move_up();
+    layout.verify_invariants();
+
+    let go = layout
+        .active_workspace()
+        .and_then(|ws| ws.grid_overview())
+        .unwrap();
+    assert!(go.rearrange_anim.is_none());
+
+    check_ops_on_layout(&mut layout, [Op::AdvanceAnimations { msec_delta: 50 }]);
+    let after_3 = layout
+        .active_workspace()
+        .unwrap()
+        .grid_window_visual_transform(&3)
+        .unwrap();
+    approx::assert_abs_diff_eq!(after_3.0.x, before_3.0.x, epsilon = 0.001);
+    approx::assert_abs_diff_eq!(after_3.0.y, before_3.0.y, epsilon = 0.001);
+    approx::assert_abs_diff_eq!(after_3.1, before_3.1, epsilon = 0.001);
+}
+
+#[test]
 fn grid_close_top_window_preserves_lower_tile_move_animation() {
     let mut layout = check_ops([
         Op::AddOutput(1),
@@ -5723,6 +5770,147 @@ fn grid_close_after_moving_focused_window_to_workspace_refits_view() {
 }
 
 #[test]
+fn removing_active_middle_column_refits_view_to_surviving_columns() {
+    let expected = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: wide_625_params(1),
+        },
+        Op::Communicate(1),
+        Op::AddWindow {
+            params: wide_625_params(3),
+        },
+        Op::Communicate(3),
+        Op::FocusWindow(1),
+        Op::CompleteAnimations,
+    ]);
+    let expected_1 = window_render_pos(&expected, 1);
+    let expected_3 = window_render_pos(&expected, 3);
+
+    let layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: wide_625_params(1),
+        },
+        Op::Communicate(1),
+        Op::AddWindow {
+            params: wide_625_params(2),
+        },
+        Op::Communicate(2),
+        Op::AddWindow {
+            params: wide_625_params(3),
+        },
+        Op::Communicate(3),
+        Op::FocusWindow(2),
+        Op::CompleteAnimations,
+        Op::CloseWindow(2),
+        Op::CompleteAnimations,
+    ]);
+
+    assert_eq!(layout.focus().map(|window| *window.id()), Some(1));
+    let actual_1 = window_render_pos(&layout, 1);
+    let actual_3 = window_render_pos(&layout, 3);
+    approx::assert_abs_diff_eq!(actual_1.x, expected_1.x, epsilon = 0.001);
+    approx::assert_abs_diff_eq!(actual_1.y, expected_1.y, epsilon = 0.001);
+    approx::assert_abs_diff_eq!(actual_3.x, expected_3.x, epsilon = 0.001);
+    approx::assert_abs_diff_eq!(actual_3.y, expected_3.y, epsilon = 0.001);
+}
+
+#[test]
+fn removing_active_middle_column_uses_window_movement_for_left_refill() {
+    use niri_config::animations::{Curve, EasingParams, Kind};
+
+    let mut options = Options::default();
+    options.animations.horizontal_view_movement.0.kind = Kind::Easing(EasingParams {
+        duration_ms: 100,
+        curve: Curve::EaseOutExpo,
+    });
+    options.animations.window_movement.0.kind = Kind::Easing(EasingParams {
+        duration_ms: 1000,
+        curve: Curve::Linear,
+    });
+
+    let expected = check_ops_with_options(
+        options.clone(),
+        [
+            Op::AddOutput(1),
+            Op::AddWindow {
+                params: wide_625_params(1),
+            },
+            Op::Communicate(1),
+            Op::AddWindow {
+                params: wide_625_params(3),
+            },
+            Op::Communicate(3),
+            Op::FocusWindow(1),
+            Op::CompleteAnimations,
+        ],
+    );
+    let final_1 = window_render_pos(&expected, 1);
+    let final_3 = window_render_pos(&expected, 3);
+
+    let mut layout = check_ops_with_options(
+        options,
+        [
+            Op::AddOutput(1),
+            Op::AddWindow {
+                params: wide_625_params(1),
+            },
+            Op::Communicate(1),
+            Op::AddWindow {
+                params: wide_625_params(2),
+            },
+            Op::Communicate(2),
+            Op::AddWindow {
+                params: wide_625_params(3),
+            },
+            Op::Communicate(3),
+            Op::FocusWindow(2),
+            Op::CompleteAnimations,
+        ],
+    );
+    let before_1 = window_render_pos(&layout, 1);
+    let before_3 = window_render_pos(&layout, 3);
+
+    check_ops_on_layout(&mut layout, [Op::CloseWindow(2)]);
+    approx::assert_abs_diff_eq!(window_render_pos(&layout, 1).x, before_1.x, epsilon = 0.001);
+
+    check_ops_on_layout(&mut layout, [Op::AdvanceAnimations { msec_delta: 100 }]);
+    let expected_1_x = before_1.x + (final_1.x - before_1.x) * 0.1;
+    let expected_3_x = before_3.x + (final_3.x - before_3.x) * 0.1;
+    approx::assert_abs_diff_eq!(window_render_pos(&layout, 1).x, expected_1_x, epsilon = 1.0);
+    approx::assert_abs_diff_eq!(window_render_pos(&layout, 3).x, expected_3_x, epsilon = 1.0);
+    assert_eq!(layout.focus().map(|window| *window.id()), Some(1));
+}
+
+#[test]
+fn removing_active_middle_column_focuses_right_refill() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: wide_625_params(1),
+        },
+        Op::Communicate(1),
+        Op::AddWindow {
+            params: wide_625_params(2),
+        },
+        Op::Communicate(2),
+        Op::AddWindow {
+            params: wide_625_params(3),
+        },
+        Op::Communicate(3),
+        Op::FocusWindow(1),
+        Op::CompleteAnimations,
+        Op::FocusWindow(2),
+        Op::CompleteAnimations,
+    ]);
+
+    check_ops_on_layout(&mut layout, [Op::CloseWindow(2), Op::CompleteAnimations]);
+
+    assert_eq!(layout.focus().map(|window| *window.id()), Some(3));
+}
+
+#[test]
 fn grid_close_after_focused_window_removal_refits_view() {
     let mut options = Options::default();
     options.layout.center_focused_column = CenterFocusedColumn::OnOverflow;
@@ -6029,6 +6217,35 @@ fn grid_recompute_while_rearranging_does_not_restart_animation() {
     let value_after = grid_rearrange_anim_value(&layout);
 
     assert!(value_after >= value_before);
+}
+
+#[test]
+fn grid_passive_recompute_preserves_sources_for_unchanged_targets() {
+    let mut layout = three_column_grid_layout(1);
+    check_ops_on_layout(
+        &mut layout,
+        [Op::ToggleGridOverview, Op::CompleteAnimations],
+    );
+
+    layout.move_right();
+    check_ops_on_layout(&mut layout, [Op::AdvanceAnimations { msec_delta: 50 }]);
+
+    let (positions_before, scales_before) = {
+        let go = layout
+            .active_workspace()
+            .and_then(|ws| ws.grid_overview())
+            .unwrap();
+        (go.entry_positions.clone(), go.entry_scales.clone())
+    };
+
+    layout.update_window(&1, None);
+
+    let go = layout
+        .active_workspace()
+        .and_then(|ws| ws.grid_overview())
+        .unwrap();
+    assert_eq!(go.entry_positions, positions_before);
+    assert_eq!(go.entry_scales, scales_before);
 }
 
 #[test]

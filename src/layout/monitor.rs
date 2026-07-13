@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use niri_config::{CornerRadius, LayoutPart};
 use smithay::backend::renderer::element::utils::{
-    CropRenderElement, Relocate, RelocateRenderElement, RescaleRenderElement,
+    CropRenderElement, Relocate, RelocateRenderElement,
 };
 use smithay::output::Output;
 use smithay::utils::{Logical, Point, Rectangle, Size};
@@ -22,6 +22,7 @@ use super::{compute_overview_zoom, ActivateWindow, HitType, LayoutElement, Optio
 use crate::animation::{Animation, Clock};
 use crate::input::swipe_tracker::SwipeTracker;
 use crate::niri_render_elements;
+use crate::render_helpers::overview_rescale::OverviewRescaleRenderElement;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::solid_color::SolidColorRenderElement;
@@ -198,7 +199,7 @@ niri_render_elements! {
 }
 
 pub type MonitorRenderElement<R> =
-    RelocateRenderElement<RescaleRenderElement<MonitorInnerRenderElement<R>>>;
+    RelocateRenderElement<OverviewRescaleRenderElement<MonitorInnerRenderElement<R>>>;
 
 impl WorkspaceSwitch {
     pub fn current_idx(&self) -> f64 {
@@ -1753,7 +1754,7 @@ impl<W: LayoutElement> Monitor<W> {
         self.insert_hint_element
             .render(renderer, render_loc.location, &mut |elem| {
                 let elem = MonitorInnerRenderElement::UncroppedInsertHint(elem);
-                let elem = RescaleRenderElement::from_element(elem, Point::default(), 1.);
+                let elem = OverviewRescaleRenderElement::from_element(elem, Point::default(), 1.);
                 let elem =
                     RelocateRenderElement::from_element(elem, Point::default(), Relocate::Relative);
                 push(elem);
@@ -1801,7 +1802,7 @@ impl<W: LayoutElement> Monitor<W> {
             .filter(|_| !self.options.layout.insert_hint.off);
 
         let scale_relocate = move |geo: Rectangle<f64, Logical>, elem| {
-            let elem = RescaleRenderElement::from_element(elem, Point::from((0, 0)), zoom);
+            let elem = OverviewRescaleRenderElement::from_element(elem, Point::from((0, 0)), zoom);
             RelocateRenderElement::from_element(
                 elem,
                 // The offset we get from workspaces_with_render_geo() is already
@@ -1830,7 +1831,8 @@ impl<W: LayoutElement> Monitor<W> {
 
             if ws.is_grid_overview_open() || ws.is_grid_overview_animation() {
                 let grid_scale_relocate = move |elem| {
-                    let elem = RescaleRenderElement::from_element(elem, Point::from((0, 0)), zoom);
+                    let elem =
+                        OverviewRescaleRenderElement::from_element(elem, Point::from((0, 0)), zoom);
                     RelocateRenderElement::from_element(
                         elem,
                         geo.loc.to_physical_precise_round(scale),
@@ -1898,7 +1900,8 @@ impl<W: LayoutElement> Monitor<W> {
             ws.render_shadow(renderer, &mut |elem| {
                 let elem = elem.with_alpha(alpha);
                 let elem = MonitorInnerRenderElement::Shadow(elem);
-                let elem = RescaleRenderElement::from_element(elem, Point::from((0, 0)), zoom);
+                let elem =
+                    OverviewRescaleRenderElement::from_element(elem, Point::from((0, 0)), zoom);
                 let elem = RelocateRenderElement::from_element(
                     elem,
                     geo.loc.to_physical_precise_round(scale),

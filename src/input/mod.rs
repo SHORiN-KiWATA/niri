@@ -5281,7 +5281,12 @@ fn hardcoded_grid_or_overview_bind(
     keyboard_focus: &KeyboardFocus,
 ) -> Option<Bind> {
     if is_grid_overview_open && (keyboard_focus.is_layout() || keyboard_focus.is_overview()) {
-        hardcoded_grid_overview_bind(raw, mods)
+        let bind = hardcoded_grid_overview_bind(raw, mods);
+        if bind.is_none() && keyboard_focus.is_overview() {
+            hardcoded_overview_bind(raw, mods)
+        } else {
+            bind
+        }
     } else if keyboard_focus.is_overview() {
         hardcoded_overview_bind(raw, mods)
     } else {
@@ -6094,6 +6099,33 @@ mod tests {
     }
 
     #[test]
+    fn grid_without_a_matching_bind_falls_back_to_overview() {
+        let no_mods = ModifiersState::default();
+        let overview_focus = KeyboardFocus::Overview;
+
+        for keysym in [Keysym::Return, Keysym::Escape] {
+            assert!(matches!(
+                hardcoded_grid_or_overview_bind(keysym, no_mods, true, &overview_focus)
+                    .map(|bind| bind.action),
+                Some(Action::ToggleOverview)
+            ));
+        }
+
+        assert!(matches!(
+            hardcoded_grid_or_overview_bind(Keysym::Left, no_mods, true, &overview_focus)
+                .map(|bind| bind.action),
+            Some(Action::FocusColumnLeft)
+        ));
+        assert!(hardcoded_grid_or_overview_bind(
+            Keysym::Return,
+            no_mods,
+            true,
+            &KeyboardFocus::Layout { surface: None },
+        )
+        .is_none());
+    }
+
+    #[test]
     fn middle_click_close_is_limited_to_grid_and_overview() {
         assert!(should_close_window_on_middle_click(
             Some(MouseButton::Middle),
@@ -6101,6 +6133,7 @@ mod tests {
             false,
             false,
             false,
+            false,
         ));
         assert!(should_close_window_on_middle_click(
             Some(MouseButton::Middle),
@@ -6108,31 +6141,36 @@ mod tests {
             true,
             false,
             false,
-        ));
-        assert!(!should_close_window_on_middle_click(
-            Some(MouseButton::Middle),
-            false,
-            false,
-            false,
             false,
         ));
         assert!(!should_close_window_on_middle_click(
             Some(MouseButton::Middle),
-            true,
             false,
-            true,
+            false,
+            false,
+            false,
             false,
         ));
         assert!(!should_close_window_on_middle_click(
             Some(MouseButton::Middle),
             true,
             false,
+            true,
+            false,
+            false,
+        ));
+        assert!(!should_close_window_on_middle_click(
+            Some(MouseButton::Middle),
+            true,
+            false,
             false,
             true,
+            false,
         ));
         assert!(!should_close_window_on_middle_click(
             Some(MouseButton::Left),
             true,
+            false,
             false,
             false,
             false,
