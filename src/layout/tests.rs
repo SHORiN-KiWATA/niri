@@ -4544,6 +4544,22 @@ fn wide_625_params(id: usize) -> TestWindowParams {
     params
 }
 
+fn wide_columns(count: usize, options: Options) -> Layout<TestWindow> {
+    let mut ops = vec![Op::AddOutput(1)];
+    for id in 1..=count {
+        ops.push(Op::AddWindow {
+            params: wide_625_params(id),
+        });
+        ops.push(Op::Communicate(id));
+    }
+
+    check_ops_with_options(options, ops)
+}
+
+fn scrolling_view_pos(layout: &Layout<TestWindow>) -> f64 {
+    layout.active_workspace().unwrap().scrolling().view_pos()
+}
+
 fn grid_window_point(
     layout: &Layout<TestWindow>,
     window: usize,
@@ -5908,6 +5924,96 @@ fn removing_active_middle_column_focuses_right_refill() {
     check_ops_on_layout(&mut layout, [Op::CloseWindow(2), Op::CompleteAnimations]);
 
     assert_eq!(layout.focus().map(|window| *window.id()), Some(3));
+}
+
+#[test]
+fn removing_rightmost_columns_refills_view_repeatedly() {
+    let mut expected = wide_columns(2, Options::default());
+    check_ops_on_layout(&mut expected, [Op::CompleteAnimations]);
+    let mut expected_after_first_close = wide_columns(3, Options::default());
+    check_ops_on_layout(&mut expected_after_first_close, [Op::CompleteAnimations]);
+
+    let mut layout = wide_columns(4, Options::default());
+    check_ops_on_layout(
+        &mut layout,
+        [
+            Op::CompleteAnimations,
+            Op::CloseWindow(4),
+            Op::CompleteAnimations,
+        ],
+    );
+    approx::assert_abs_diff_eq!(
+        scrolling_view_pos(&layout),
+        scrolling_view_pos(&expected_after_first_close),
+        epsilon = 0.001,
+    );
+
+    check_ops_on_layout(&mut layout, [Op::CloseWindow(3), Op::CompleteAnimations]);
+
+    assert_eq!(layout.focus().map(|window| *window.id()), Some(2));
+    approx::assert_abs_diff_eq!(
+        scrolling_view_pos(&layout),
+        scrolling_view_pos(&expected),
+        epsilon = 0.001,
+    );
+}
+
+#[test]
+fn removing_rightmost_column_refills_view_after_focus_change() {
+    let mut expected = wide_columns(3, Options::default());
+    check_ops_on_layout(&mut expected, [Op::CompleteAnimations]);
+
+    let mut layout = wide_columns(4, Options::default());
+    check_ops_on_layout(
+        &mut layout,
+        [
+            Op::CompleteAnimations,
+            Op::FocusWindow(3),
+            Op::CompleteAnimations,
+            Op::FocusWindow(4),
+            Op::CompleteAnimations,
+            Op::CloseWindow(4),
+            Op::CompleteAnimations,
+        ],
+    );
+
+    assert_eq!(layout.focus().map(|window| *window.id()), Some(3));
+    approx::assert_abs_diff_eq!(
+        scrolling_view_pos(&layout),
+        scrolling_view_pos(&expected),
+        epsilon = 0.001,
+    );
+}
+
+#[test]
+fn removing_rightmost_column_preserves_centering_mode() {
+    for mode in [CenterFocusedColumn::Always, CenterFocusedColumn::OnOverflow] {
+        let mut options = Options::default();
+        options.layout.center_focused_column = mode;
+
+        let mut expected = wide_columns(3, options.clone());
+        check_ops_on_layout(&mut expected, [Op::CompleteAnimations]);
+
+        let mut layout = wide_columns(4, options);
+        check_ops_on_layout(
+            &mut layout,
+            [
+                Op::CompleteAnimations,
+                Op::FocusWindow(3),
+                Op::CompleteAnimations,
+                Op::FocusWindow(4),
+                Op::CompleteAnimations,
+                Op::CloseWindow(4),
+                Op::CompleteAnimations,
+            ],
+        );
+
+        approx::assert_abs_diff_eq!(
+            scrolling_view_pos(&layout),
+            scrolling_view_pos(&expected),
+            epsilon = 0.001,
+        );
+    }
 }
 
 #[test]
