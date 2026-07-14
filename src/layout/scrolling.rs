@@ -68,6 +68,9 @@ pub struct ScrollingSpace<W: LayoutElement> {
     /// View offset to restore after unfullscreening or unmaximizing.
     view_offset_to_restore: Option<f64>,
 
+    /// View offset to restore after untoggling full width.
+    view_offset_before_full_width: Option<f64>,
+
     /// Windows in the closing animation.
     closing_windows: Vec<ClosingWindow>,
 
@@ -314,6 +317,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             view_offset: ViewOffset::Static(0.),
             activate_prev_column_on_removal: None,
             view_offset_to_restore: None,
+            view_offset_before_full_width: None,
             closing_windows: Vec::new(),
             view_size,
             working_area,
@@ -1043,6 +1047,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             // A different column was activated; reset the flag.
             self.activate_prev_column_on_removal = None;
             self.view_offset_to_restore = None;
+            self.view_offset_before_full_width = None;
             self.interactive_resize = None;
         }
     }
@@ -1457,6 +1462,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
 
         if column_idx == self.active_column_idx {
             self.view_offset_to_restore = None;
+            self.view_offset_before_full_width = None;
         }
 
         if self.columns.is_empty() {
@@ -1666,6 +1672,17 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                 self.view_offset.offset(offset);
             }
 
+            let is_full_width = self.columns[col_idx].is_full_width;
+            if offset != 0. && is_full_width && self.view_offset_before_full_width.is_none() {
+                self.view_offset_before_full_width = Some(self.view_offset.stationary());
+            }
+
+            let unfull_width_offset = if offset != 0. && !is_full_width {
+                self.view_offset_before_full_width.take()
+            } else {
+                None
+            };
+
             // When the active column goes fullscreen, store the view offset to restore later.
             let is_normal = self.columns[col_idx].sizing_mode().is_normal();
             if was_normal && !is_normal {
@@ -1698,8 +1715,8 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                     self.options.animations.horizontal_view_movement.0
                 };
 
-                // Restore the view offset upon unfullscreening if needed.
-                if let Some(prev_offset) = unfullscreen_offset {
+                // Restore the view offset upon unfullscreening or untoggling full width if needed.
+                if let Some(prev_offset) = unfull_width_offset.or(unfullscreen_offset) {
                     self.animate_view_offset_with_config(col_idx, prev_offset, config);
                 }
 
@@ -3897,6 +3914,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
 
         if self.active_column_idx != new_col_idx {
             self.view_offset_to_restore = None;
+            self.view_offset_before_full_width = None;
         }
 
         self.active_column_idx = new_col_idx;
