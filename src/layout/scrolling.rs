@@ -845,6 +845,27 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         )
     }
 
+    fn compute_new_view_offset_for_rightmost_column(&self, idx: usize) -> f64 {
+        let area = self.working_area;
+        let gaps = self.options.layout.gaps;
+        let width = self.data[idx].width;
+
+        if self.options.layout.center_focused_column == CenterFocusedColumn::OnOverflow
+            && 0 < idx
+            && self.data[idx - 1].width + 3. * gaps + width > area.size.w
+        {
+            return self.compute_new_view_offset_for_column_centered(None, idx);
+        }
+
+        let padding = |width: f64| ((area.size.w - width) / 2.).clamp(0., gaps);
+        let leftmost_view_pos = -padding(self.data[0].width) - area.loc.x;
+        let rightmost_view_pos =
+            self.column_x(idx) + width + padding(width) - area.size.w - area.loc.x;
+        let view_pos = leftmost_view_pos.max(rightmost_view_pos);
+
+        view_pos - self.column_x(idx)
+    }
+
     fn compute_new_view_offset_for_column(
         &self,
         target_x: Option<f64>,
@@ -1392,6 +1413,12 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         column_idx: usize,
         anim_config: Option<niri_config::Animation>,
     ) -> Column<W> {
+        let refill_right_edge = anim_config.is_none()
+            && !self.view_offset.is_gesture()
+            && column_idx == self.active_column_idx
+            && 0 < column_idx
+            && column_idx + 1 == self.columns.len()
+            && self.columns.iter().all(|col| col.sizing_mode().is_normal());
         let focus_left_refill = anim_config.is_none() && self.should_focus_left_refill(column_idx);
 
         // Animate movement of the other columns.
@@ -1442,6 +1469,14 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             // FIXME: preserve activate_prev_column_on_removal.
             self.active_column_idx -= 1;
             self.activate_prev_column_on_removal = None;
+        } else if refill_right_edge {
+            let target_idx = self.columns.len() - 1;
+            self.activate_column_with_anim_config(target_idx, view_config);
+
+            if !self.is_centering_focused_column() {
+                let offset = self.compute_new_view_offset_for_rightmost_column(target_idx);
+                self.animate_view_offset_with_config(target_idx, offset, view_config);
+            }
         } else if column_idx == self.active_column_idx
             && self.activate_prev_column_on_removal.is_some()
         {
