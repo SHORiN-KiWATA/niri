@@ -21,7 +21,7 @@ use niri_config::{
     WorkspaceReference, Xkb,
 };
 use smithay::backend::allocator::Fourcc;
-use smithay::backend::input::Keycode;
+use smithay::backend::input::{InputTime, Keycode};
 use smithay::backend::renderer::damage::OutputDamageTracker;
 use smithay::backend::renderer::element::memory::{
     MemoryRenderBuffer, MemoryRenderBufferRenderElement,
@@ -921,7 +921,7 @@ impl State {
             &MotionEvent {
                 location,
                 serial: SERIAL_COUNTER.next_serial(),
-                time: get_monotonic_time().as_millis() as u32,
+                time: InputTime::now(),
             },
         );
         pointer.frame(self);
@@ -1173,7 +1173,7 @@ impl State {
             &MotionEvent {
                 location,
                 serial: SERIAL_COUNTER.next_serial(),
-                time: get_monotonic_time().as_millis() as u32,
+                time: InputTime::now(),
             },
         );
 
@@ -1410,7 +1410,7 @@ impl State {
                     self.niri.seat.get_pointer().unwrap().unset_grab(
                         self,
                         SERIAL_COUNTER.next_serial(),
-                        get_monotonic_time().as_millis() as u32,
+                        InputTime::now(),
                     );
                     self.niri.popup_grab = None;
                 }
@@ -2150,7 +2150,7 @@ impl State {
             self.niri.seat.get_pointer().unwrap().unset_grab(
                 self,
                 SERIAL_COUNTER.next_serial(),
-                get_monotonic_time().as_millis() as u32,
+                InputTime::now(),
             );
             if let Some(touch) = self.niri.seat.get_touch() {
                 touch.unset_grab(self);
@@ -2233,7 +2233,7 @@ impl State {
         };
 
         // Now that we captured the screenshots, clear grabs like drag-and-drop, etc.
-        let time = get_monotonic_time().as_millis() as u32;
+        let time = InputTime::now();
         self.niri
             .seat
             .get_pointer()
@@ -2243,12 +2243,7 @@ impl State {
             touch.unset_grab(self);
         }
 
-        // Can't unset_grab() from with_tools(), will deadlock on tablet seat mutex...
-        let mut tools = Vec::new();
-        self.niri.seat.tablet_seat().with_tools(|map| {
-            tools = Vec::from_iter(map.values().cloned());
-        });
-        for tool in tools {
+        for tool in self.niri.seat.tablet_seat().get_tools().into_values() {
             tool.unset_grab(self, SERIAL_COUNTER.next_serial(), time);
         }
 
@@ -2321,7 +2316,7 @@ impl State {
             self.niri.seat.get_pointer().unwrap().unset_grab(
                 self,
                 SERIAL_COUNTER.next_serial(),
-                get_monotonic_time().as_millis() as u32,
+                InputTime::now(),
             );
         }
     }
