@@ -186,7 +186,8 @@ binds {
 }
 ```
 
-The minimized window stays in the layout as a placeholder and is shown in the grid overview.
+The minimized window stays in the layout as a placeholder and is shown in the [grid overview](./Grid-Overview.md#minimized-windows), marked with a colored frame.
+There it behaves like any other cell: other windows move onto its spot rather than jumping over it, and moving it around leaves it minimized.
 Use `unminimize-window` to restore the most recently minimized window, or `toggle-window-minimized` to switch between the two states.
 
 #### `spawn`

@@ -11,6 +11,15 @@ If a column contains multiple windows, use Up/Down to switch between them within
 
 Click a window to activate it and close the grid overview.
 
+### Minimized windows
+
+The grid overview is where [minimized windows](./Configuration:-Key-Bindings.md#minimize-window) live: a minimized window keeps its place in the layout and only shows up here, as a cell marked with a colored frame.
+Activating that cell restores the window.
+
+Minimized cells count as normal cells for navigation *and* for moving:
+moving a window with `move-column-left`/`move-column-right` steps onto the minimized cell instead of jumping over it, and moving a minimized cell itself reorders it without restoring it.
+Outside the grid overview minimized windows are invisible, so moves there jump over them as before.
+
 ### Configuration
 
 See the full documentation for the `grid-overview` section [here](./Configuration:-Miscellaneous.md#grid-overview).
@@ -47,5 +56,17 @@ To change the focused column scale, use the `focused-column-scale` setting:
 ```kdl
 grid-overview {
     focused-column-scale 1.08
+}
+```
+
+To change how minimized cells are marked, use the `minimized-highlight` setting:
+
+```kdl
+grid-overview {
+    minimized-highlight {
+        color "#999999b3"
+        padding 6
+        corner-radius 0
+    }
 }
 ```
