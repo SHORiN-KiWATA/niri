@@ -2,9 +2,12 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use niri_config::animations::Kind;
+use niri_config::CornerRadius;
 use smithay::utils::{Logical, Point, Rectangle, Size};
 
+use super::focus_ring::{FocusRing, FocusRingRenderElement};
 use super::{Animation, Clock, LayoutElement, Options, OverviewProgress};
+use crate::render_helpers::renderer::NiriRenderer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GridDirection {
@@ -122,6 +125,11 @@ pub struct GridOverview<W: LayoutElement> {
     /// windows stay visible above the source grid they are crossing.
     pub flying_in_windows: Vec<W::Id>,
     added_window_ids: Vec<W::Id>,
+    /// Filled highlights drawn behind the cells of minimized windows, by window id.
+    ///
+    /// They live here rather than on the tiles because they are sized in screen space: a marker
+    /// that scaled with the cell would get thinner the more windows the grid shows.
+    minimized_highlights: Vec<(W::Id, FocusRing)>,
     /// col_idx → tile_idx for Column items that have multiple tiles.
     pub column_tile_focus: Vec<(usize, usize)>,
     pub clock: Clock,
@@ -148,6 +156,7 @@ impl<W: LayoutElement> GridOverview<W> {
             grabbed_window: None,
             flying_in_windows: Vec::new(),
             added_window_ids: Vec::new(),
+            minimized_highlights: Vec::new(),
             column_tile_focus: Vec::new(),
             clock,
             options,
@@ -785,6 +794,75 @@ impl<W: LayoutElement> GridOverview<W> {
         if let Some((item, _)) = self.layout.entries.get_mut(idx) {
             item.set_column_window_id(id);
         }
+    }
+
+    /// Updates the highlights drawn behind minimized cells.
+    ///
+    /// `entries` carries the already-padded on-screen size of every minimized window's cell and
+    /// whether that window is urgent. Rings are kept across frames so their buffers (and with
+    /// them, damage tracking) stay stable.
+    pub(super) fn update_minimized_highlights(
+        &mut self,
+        entries: &[(W::Id, Size<f64, Logical>, bool)],
+        scale: f64,
+    ) {
+        let config = self.options.grid_overview.minimized_highlight;
+        if config.off || entries.is_empty() {
+            self.minimized_highlights.clear();
+            return;
+        }
+
+        // The marker fades in and out with the grid, like the minimized thumbnails themselves.
+        let alpha = self.progress_value().clamp(0., 1.) as f32;
+
+        let mut old = std::mem::take(&mut self.minimized_highlights);
+        for (id, size, is_urgent) in entries {
+            let mut ring = match old.iter().position(|(other, _)| other == id) {
+                Some(idx) => old.swap_remove(idx).1,
+                None => FocusRing::new(niri_config::FocusRing {
+                    off: false,
+                    width: 0.,
+                    active_gradient: None,
+                    urgent_gradient: None,
+                    ..Default::default()
+                }),
+            };
+
+            let mut ring_config = *ring.config();
+            ring_config.active_color = config.color;
+            ring_config.urgent_color = config.urgent_color;
+            ring.update_config(ring_config);
+            ring.update_render_elements(
+                *size,
+                true,
+                false,
+                *is_urgent,
+                Rectangle::default(),
+                CornerRadius::from(config.corner_radius as f32),
+                scale,
+                alpha,
+            );
+
+            self.minimized_highlights.push((id.clone(), ring));
+        }
+    }
+
+    pub(super) fn render_minimized_highlight(
+        &self,
+        renderer: &mut impl NiriRenderer,
+        window: &W::Id,
+        location: Point<f64, Logical>,
+        push: &mut dyn FnMut(FocusRingRenderElement),
+    ) {
+        let Some((_, ring)) = self
+            .minimized_highlights
+            .iter()
+            .find(|(id, _)| id == window)
+        else {
+            return;
+        };
+
+        ring.render(renderer, location, push);
     }
 
     pub(super) fn record_added_window(&mut self, id: W::Id) {

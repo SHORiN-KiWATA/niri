@@ -20,6 +20,7 @@ use smithay::wayland::shell::xdg::SurfaceCachedState;
 use tracing::debug;
 
 use super::floating::{FloatingSpace, FloatingSpaceRenderElement};
+use super::focus_ring::FocusRingRenderElement;
 use super::grid_overview::{GridDirection, GridEntryInfo, GridItem, GridOverview};
 use super::scrolling::{
     Column, ColumnWidth, MoveTargets, ScrollDirection, ScrollingSpace, ScrollingSpaceRenderElement,
@@ -177,6 +178,7 @@ niri_render_elements! {
         Floating = FloatingSpaceRenderElement<R>,
         GridTile =
             RelocateRenderElement<OverviewRescaleRenderElement<ScrollingSpaceRenderElement<R>>>,
+        MinimizedHighlight = FocusRingRenderElement,
     }
 }
 
@@ -1359,6 +1361,8 @@ impl<W: LayoutElement> Workspace<W> {
             }
         }
 
+        self.update_grid_minimized_highlights();
+
         if layer.is_normal() {
             self.shadow.update_render_elements(
                 self.view_size,
@@ -1367,6 +1371,45 @@ impl<W: LayoutElement> Workspace<W> {
                 self.scale.fractional_scale(),
                 1.,
             );
+        }
+    }
+
+    /// Sizes the highlights drawn behind the cells of minimized windows.
+    ///
+    /// Minimized windows are only ever on screen in the grid overview, where nothing else sets
+    /// them apart from normal windows. The highlight is sized in screen space so it keeps the same
+    /// thickness no matter how far the grid scales the cells down.
+    fn update_grid_minimized_highlights(&mut self) {
+        let config = self.options.grid_overview.minimized_highlight;
+        let scale = self.scale.fractional_scale();
+
+        let mut entries = Vec::new();
+        if !config.off {
+            if let Some(go) = &self.grid_overview {
+                if go.open || go.progress.is_some() {
+                    for (item, info) in &go.layout.entries {
+                        let id = item.window_id();
+                        let Some(win) = self
+                            .windows()
+                            .find(|win| win.id() == id && win.is_minimized())
+                        else {
+                            continue;
+                        };
+                        let is_urgent = win.is_urgent();
+
+                        let (_, visual_scale) = self.grid_item_visual_transform(go, item, info);
+                        let source_size = info.target_size.downscale(info.target_scale.max(0.0001));
+                        let visual_size = source_size.upscale(visual_scale);
+                        let size =
+                            visual_size + Size::from((config.padding * 2., config.padding * 2.));
+                        entries.push((id.clone(), size, is_urgent));
+                    }
+                }
+            }
+        }
+
+        if let Some(go) = &mut self.grid_overview {
+            go.update_minimized_highlights(&entries, scale);
         }
     }
 
@@ -3180,6 +3223,15 @@ impl<W: LayoutElement> Workspace<W> {
                         );
                     }
                 }
+
+                // Mark minimized cells. Elements are queued front-to-back, so pushing the
+                // highlight after the cell's windows puts it behind them, where it shows as a
+                // frame around the thumbnail. Cells of other windows are a no-op here.
+                let padding = self.options.grid_overview.minimized_highlight.padding;
+                let loc = visual_pos - Point::from((padding, padding));
+                go.render_minimized_highlight(ctx.renderer, item.window_id(), loc, &mut |elem| {
+                    push(elem.into())
+                });
             };
 
             // Fading minimized windows render at the bottom while the grid closes, so they
