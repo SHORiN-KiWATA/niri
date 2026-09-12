@@ -8057,6 +8057,21 @@ fn grid_moving_minimized_cell_keeps_it_minimized() {
 }
 
 #[test]
+fn grid_restore_does_not_leave_strip_move_animations() {
+    // The grid reads the columns' render offsets to know where a cell flies back to, so the
+    // insert animation from a restore must not be left running: the neighbors would fly to their
+    // pre-restore spots and then slide back.
+    let mut layout = grid_with_minimized_middle(3);
+    check_ops_on_layout(&mut layout, [Op::CompleteAnimations]);
+    check_ops_on_layout(&mut layout, [Op::UnminimizeWindow(2)]);
+
+    let ws = layout.active_workspace().unwrap();
+    for col in ws.scrolling().columns() {
+        assert_eq!(col.render_offset(), Point::from((0., 0.)));
+    }
+}
+
+#[test]
 fn workspace_render_geo_at_fractional_scale() {
     let ops = [
         Op::AddScaledOutput {

@@ -3654,11 +3654,17 @@ impl<W: LayoutElement> Workspace<W> {
 
         if self.is_grid_overview_open() {
             let focus = (!minimize).then(|| id.clone());
+            // Minimizing and restoring insert/remove a column, which animates the neighbors in the
+            // strip. Nothing of the strip is on screen while the grid is up, but the grid reads the
+            // columns' render offsets to know where a cell flies back to, so a still-running offset
+            // would send the neighbors to their pre-change spots and then drag them back. Drop
+            // those animations; the grid's own rearrange animation shows the change.
+            //
             // Restoring a window preserves an in-progress grid focus animation. Clicking a
             // minimized grid cell starts the focus-boost animation first; resetting focus
             // without animation here would make the cell jump straight to its enlarged
             // focused size before the grid starts closing.
-            self.refresh_grid_overview_after_action(focus.as_ref(), false, Vec::new(), !minimize);
+            self.refresh_grid_overview_after_action(focus.as_ref(), true, Vec::new(), !minimize);
         } else if !minimize {
             // Restored windows appear with the open animation. With the grid overview open the
             // grid close animation carries the window into place instead.
