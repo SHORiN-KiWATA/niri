@@ -2009,6 +2009,7 @@ mod tests {
                     open_floating: Some(
                         false,
                     ),
+                    open_minimized: None,
                     open_focused: Some(
                         true,
                     ),
