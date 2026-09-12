@@ -8072,6 +8072,39 @@ fn grid_restore_does_not_leave_strip_move_animations() {
 }
 
 #[test]
+fn grid_overview_picks_up_config_reloads() {
+    // The overview is created once and then lives as long as its workspace, so it used to keep
+    // serving the options it was first opened with: colors from an included file (matugen and
+    // friends rewrite those live), gap, padding and scales all froze at that point.
+    let mut layout = grid_with_minimized_middle(3);
+
+    let highlight = niri_config::GridMinimizedHighlight {
+        off: false,
+        color: niri_config::Color::from_rgba8_unpremul(1, 2, 3, 255),
+        urgent_color: niri_config::Color::from_rgba8_unpremul(4, 5, 6, 255),
+        padding: 12.,
+        corner_radius: 4.,
+    };
+    let options = Options {
+        grid_overview: niri_config::GridOverview {
+            gap: 64.,
+            minimized_highlight: highlight,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    layout.update_options(options);
+    layout.verify_invariants();
+
+    let go = layout.active_workspace().unwrap().grid_overview().unwrap();
+    assert_eq!(
+        go.options.grid_overview.minimized_highlight, highlight,
+        "the overview must serve the current highlight config"
+    );
+    assert_eq!(go.layout.gap, 64., "a new gap must re-lay out the grid");
+}
+
+#[test]
 fn grid_drop_onto_minimized_cell_never_merges_into_it() {
     // Merging a window into the placeholder column would leave the minimized tile inside a
     // visible column, which renders as one cell, so the minimized window would lose its own cell.

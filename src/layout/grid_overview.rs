@@ -163,6 +163,15 @@ impl<W: LayoutElement> GridOverview<W> {
         }
     }
 
+    /// Picks up a new config.
+    ///
+    /// The overview is created once and then lives as long as its workspace, so without this it
+    /// would keep serving whatever options were in effect when it was first opened: gap, padding,
+    /// scales, animations and the minimized highlight would all freeze at that point.
+    pub(super) fn update_config(&mut self, options: Rc<Options>) {
+        self.options = options;
+    }
+
     pub fn is_fully_open(&self) -> bool {
         self.open && matches!(self.progress, Some(OverviewProgress::Open))
     }

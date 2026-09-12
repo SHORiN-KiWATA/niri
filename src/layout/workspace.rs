@@ -1442,8 +1442,16 @@ impl<W: LayoutElement> Workspace<W> {
         self.background_buffer
             .set_color(options.layout.background_color);
 
+        if let Some(go) = &mut self.grid_overview {
+            go.update_config(options.clone());
+        }
+
         self.base_options = base_options;
         self.options = options;
+
+        // Gap, padding and scales feed the grid layout, so an open grid has to be laid out again
+        // for a config change to show up. A change that doesn't move anything is a no-op here.
+        self.recompute_grid_overview_layout(true);
     }
 
     pub fn update_layout_config(&mut self, layout_config: Option<niri_config::LayoutPart>) {
