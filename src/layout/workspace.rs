@@ -22,7 +22,7 @@ use tracing::debug;
 use super::floating::{FloatingSpace, FloatingSpaceRenderElement};
 use super::grid_overview::{GridDirection, GridEntryInfo, GridItem, GridOverview};
 use super::scrolling::{
-    Column, ColumnWidth, ScrollDirection, ScrollingSpace, ScrollingSpaceRenderElement,
+    Column, ColumnWidth, MoveTargets, ScrollDirection, ScrollingSpace, ScrollingSpaceRenderElement,
 };
 use super::shadow::Shadow;
 use super::tab_indicator::TabIndicator;
@@ -2059,46 +2059,104 @@ impl<W: LayoutElement> Workspace<W> {
         }
     }
 
+    /// Which columns strip moves may land on.
+    ///
+    /// The grid overview shows minimized windows as their own cells, so moves started from it have
+    /// to step over the placeholder columns they live in instead of skipping them.
+    fn move_targets(&self) -> MoveTargets {
+        if self.is_grid_overview_open() {
+            MoveTargets::AllColumns
+        } else {
+            MoveTargets::Interactive
+        }
+    }
+
+    /// The grid-focused window, when it is a minimized one.
+    ///
+    /// Such a window can never be the strip's active column, so moves of its cell go through the
+    /// placeholder reorder path and it stays minimized. The active column belongs to a different
+    /// window, so moves that cannot be expressed that way must be no-ops rather than act on it.
+    fn grid_minimized_focus(&self) -> Option<W::Id> {
+        if !self.is_grid_overview_open() {
+            return None;
+        }
+        let id = self.grid_focused_window_id()?;
+        self.has_minimized_window(&id).then_some(id)
+    }
+
     pub fn move_left(&mut self) -> bool {
+        if let Some(id) = self.grid_minimized_focus() {
+            return self
+                .scrolling
+                .move_minimized_column_in_direction(&id, ScrollDirection::Left);
+        }
         if self.floating_is_active.get() {
             self.floating.move_left();
             true
         } else {
-            self.scrolling.move_left()
+            let targets = self.move_targets();
+            self.scrolling.move_left(targets)
         }
     }
 
     pub fn move_right(&mut self) -> bool {
+        if let Some(id) = self.grid_minimized_focus() {
+            return self
+                .scrolling
+                .move_minimized_column_in_direction(&id, ScrollDirection::Right);
+        }
         if self.floating_is_active.get() {
             self.floating.move_right();
             true
         } else {
-            self.scrolling.move_right()
+            let targets = self.move_targets();
+            self.scrolling.move_right(targets)
         }
     }
 
     pub fn move_column_to_first(&mut self) {
+        if let Some(id) = self.grid_minimized_focus() {
+            self.scrolling.move_minimized_column_to(&id, 0);
+            return;
+        }
         if self.floating_is_active.get() {
             return;
         }
-        self.scrolling.move_column_to_first();
+        let targets = self.move_targets();
+        self.scrolling.move_column_to_first(targets);
     }
 
     pub fn move_column_to_last(&mut self) {
+        if let Some(id) = self.grid_minimized_focus() {
+            let last = self.scrolling.columns().count().saturating_sub(1);
+            self.scrolling.move_minimized_column_to(&id, last);
+            return;
+        }
         if self.floating_is_active.get() {
             return;
         }
-        self.scrolling.move_column_to_last();
+        let targets = self.move_targets();
+        self.scrolling.move_column_to_last(targets);
     }
 
     pub fn move_column_to_index(&mut self, index: usize) {
+        if let Some(id) = self.grid_minimized_focus() {
+            self.scrolling
+                .move_minimized_column_to(&id, index.saturating_sub(1));
+            return;
+        }
         if self.floating_is_active.get() {
             return;
         }
-        self.scrolling.move_column_to_index(index);
+        let targets = self.move_targets();
+        self.scrolling.move_column_to_index(index, targets);
     }
 
     pub fn move_down(&mut self) -> bool {
+        // A minimized cell is alone in its placeholder column: there is nothing to move within it.
+        if self.grid_minimized_focus().is_some() {
+            return false;
+        }
         if self.floating_is_active.get() {
             self.floating.move_down();
             true
@@ -2108,6 +2166,9 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn move_up(&mut self) -> bool {
+        if self.grid_minimized_focus().is_some() {
+            return false;
+        }
         if self.floating_is_active.get() {
             self.floating.move_up();
             true
@@ -2149,10 +2210,16 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn swap_window_in_direction(&mut self, direction: ScrollDirection) {
+        if let Some(id) = self.grid_minimized_focus() {
+            self.scrolling
+                .move_minimized_column_in_direction(&id, direction);
+            return;
+        }
         if self.floating_is_active.get() {
             return;
         }
-        self.scrolling.swap_window_in_direction(direction);
+        let targets = self.move_targets();
+        self.scrolling.swap_window_in_direction(direction, targets);
     }
 
     pub fn toggle_column_tabbed_display(&mut self) {

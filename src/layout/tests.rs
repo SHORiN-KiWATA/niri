@@ -7905,6 +7905,157 @@ fn unminimize_last_restores_most_recent() {
     assert_eq!(layout.last_minimized_window(), Some(1));
 }
 
+/// Three columns with the middle one minimized, plus its grid overview open and focused on
+/// `focus_id`.
+fn grid_with_minimized_middle(focus_id: usize) -> Layout<TestWindow> {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(3),
+        },
+        Op::MinimizeWindow(2),
+        Op::ToggleGridOverview,
+    ]);
+
+    assert!(layout.is_grid_overview_open());
+    for _ in 0..8 {
+        if layout.grid_focused_window_id() == Some(focus_id) {
+            break;
+        }
+        layout.focus_left();
+    }
+    for _ in 0..8 {
+        if layout.grid_focused_window_id() == Some(focus_id) {
+            break;
+        }
+        layout.focus_right();
+    }
+    assert_eq!(layout.grid_focused_window_id(), Some(focus_id));
+    layout.verify_invariants();
+
+    layout
+}
+
+#[track_caller]
+fn assert_window_order(layout: &Layout<TestWindow>, expected: [usize; 3]) {
+    let ws = layout.active_workspace().unwrap();
+    let ids: Vec<usize> = ws.windows().map(|w| *w.id()).collect();
+    assert_eq!(ids, expected);
+}
+
+#[test]
+fn grid_move_column_left_steps_over_minimized_cell() {
+    let mut layout = grid_with_minimized_middle(3);
+
+    // The minimized window has its own grid cell, so the move lands on it instead of jumping
+    // across to the next visible column.
+    check_ops_on_layout(&mut layout, [Op::MoveColumnLeft]);
+    assert_window_order(&layout, [1, 3, 2]);
+    assert!(layout.is_window_minimized(&2));
+
+    check_ops_on_layout(&mut layout, [Op::MoveColumnLeft]);
+    assert_window_order(&layout, [3, 1, 2]);
+}
+
+#[test]
+fn grid_move_column_right_steps_over_minimized_cell() {
+    let mut layout = grid_with_minimized_middle(1);
+
+    check_ops_on_layout(&mut layout, [Op::MoveColumnRight]);
+    assert_window_order(&layout, [2, 1, 3]);
+    assert!(layout.is_window_minimized(&2));
+
+    check_ops_on_layout(&mut layout, [Op::MoveColumnRight]);
+    assert_window_order(&layout, [2, 3, 1]);
+}
+
+#[test]
+fn grid_move_column_to_first_and_index_count_minimized_cells() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(3),
+        },
+        Op::MinimizeWindow(1),
+        Op::ToggleGridOverview,
+    ]);
+    assert_eq!(layout.grid_focused_window_id(), Some(3));
+
+    check_ops_on_layout(&mut layout, [Op::MoveColumnToFirst]);
+    assert_window_order(&layout, [3, 1, 2]);
+
+    check_ops_on_layout(&mut layout, [Op::MoveColumnToIndex(2)]);
+    assert_window_order(&layout, [1, 3, 2]);
+
+    check_ops_on_layout(&mut layout, [Op::MoveColumnToLast]);
+    assert_window_order(&layout, [1, 2, 3]);
+}
+
+#[test]
+fn move_column_left_skips_minimized_outside_grid() {
+    // Without the grid overview, minimized windows are invisible, so moves jump over them.
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(3),
+        },
+        Op::MinimizeWindow(2),
+        Op::FocusWindow(3),
+    ]);
+
+    check_ops_on_layout(&mut layout, [Op::MoveColumnLeft]);
+    assert_window_order(&layout, [3, 1, 2]);
+}
+
+#[test]
+fn grid_moving_minimized_cell_keeps_it_minimized() {
+    let mut layout = grid_with_minimized_middle(2);
+
+    check_ops_on_layout(&mut layout, [Op::MoveColumnLeft]);
+    assert_window_order(&layout, [2, 1, 3]);
+    assert!(layout.is_window_minimized(&2));
+    assert_eq!(layout.grid_focused_window_id(), Some(2));
+    // Moving it must not make it the active window either.
+    assert_ne!(
+        layout
+            .active_workspace()
+            .unwrap()
+            .active_window()
+            .map(|w| *w.id()),
+        Some(2)
+    );
+
+    check_ops_on_layout(&mut layout, [Op::MoveColumnLeft]);
+    assert_window_order(&layout, [2, 1, 3]);
+
+    check_ops_on_layout(&mut layout, [Op::MoveColumnToLast]);
+    assert_window_order(&layout, [1, 3, 2]);
+    assert!(layout.is_window_minimized(&2));
+
+    // There is nothing above or below a minimized window inside its own column.
+    check_ops_on_layout(&mut layout, [Op::MoveWindowUp, Op::MoveWindowDown]);
+    assert_window_order(&layout, [1, 3, 2]);
+    assert!(layout.is_window_minimized(&2));
+}
+
 #[test]
 fn workspace_render_geo_at_fractional_scale() {
     let ops = [
