@@ -8072,6 +8072,30 @@ fn grid_restore_does_not_leave_strip_move_animations() {
 }
 
 #[test]
+fn grid_drop_onto_minimized_cell_never_merges_into_it() {
+    // Merging a window into the placeholder column would leave the minimized tile inside a
+    // visible column, which renders as one cell, so the minimized window would lose its own cell.
+    let mut layout = grid_with_minimized_middle(3);
+    check_ops_on_layout(&mut layout, [Op::CompleteAnimations]);
+
+    let ws = layout.active_workspace().unwrap();
+    let go = ws.grid_overview().unwrap();
+    let info = *go.find_grid_info(&2).unwrap();
+
+    for frac in [0.1, 0.3, 0.5, 0.7, 0.9] {
+        let pos =
+            info.target_pos + Point::from((info.target_size.w * frac, info.target_size.h / 2.));
+        let position = ws.grid_insert_position(pos).unwrap();
+        let expected = if frac < 0.5 {
+            InsertPosition::NewColumn(1)
+        } else {
+            InsertPosition::NewColumn(2)
+        };
+        assert_eq!(position, expected, "at x fraction {frac}");
+    }
+}
+
+#[test]
 fn workspace_render_geo_at_fractional_scale() {
     let ops = [
         Op::AddScaledOutput {

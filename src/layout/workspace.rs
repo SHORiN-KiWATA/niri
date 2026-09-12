@@ -3882,9 +3882,24 @@ impl<W: LayoutElement> Workspace<W> {
 
         match item {
             GridItem::Column { col_idx, .. } => {
-                if source_pos.x < edge {
+                // A minimized cell is a placeholder column. Merging a window into it would leave
+                // the minimized tile inside a visible column, which renders as a single cell, so
+                // the minimized window would lose its own cell and disappear from the grid. Only
+                // allow inserting a new column on either side of it.
+                let is_placeholder = self
+                    .scrolling
+                    .columns()
+                    .nth(*col_idx)
+                    .is_some_and(|col| !col.has_visible_tiles());
+                let left_edge = if is_placeholder {
+                    source_size.w / 2.
+                } else {
+                    edge
+                };
+
+                if source_pos.x < left_edge {
                     InsertPosition::NewColumn(*col_idx)
-                } else if source_pos.x > source_size.w - edge {
+                } else if is_placeholder || source_pos.x > source_size.w - edge {
                     InsertPosition::NewColumn(col_idx + 1)
                 } else {
                     let tile_idx = self.grid_in_column_tile_insert_idx(item, source_pos.y);
