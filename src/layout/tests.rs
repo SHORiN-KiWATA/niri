@@ -8072,6 +8072,51 @@ fn grid_restore_does_not_leave_strip_move_animations() {
 }
 
 #[test]
+fn grid_minimizing_leaves_the_grid_focus_alone() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(3),
+        },
+        Op::FocusWindow(2),
+        Op::ToggleGridOverview,
+    ]);
+    assert_eq!(layout.grid_focused_window_id(), Some(2));
+
+    // Minimizing the focused cell keeps the focus on it: the cell is still there, and pressing
+    // minimize again restores it. The strip's activation moves on, which is what the grid focus
+    // used to follow.
+    layout.set_window_minimized(&2, true);
+    layout.verify_invariants();
+    assert_eq!(layout.grid_focused_window_id(), Some(2));
+    assert!(layout.is_window_minimized(&2));
+    assert_ne!(
+        layout
+            .active_workspace()
+            .unwrap()
+            .active_window()
+            .map(|w| *w.id()),
+        Some(2)
+    );
+
+    // Minimizing some other window must not pull the focus over to it either.
+    layout.set_window_minimized(&3, true);
+    layout.verify_invariants();
+    assert_eq!(layout.grid_focused_window_id(), Some(2));
+
+    // Restoring does focus the window it restored.
+    layout.set_window_minimized(&3, false);
+    layout.verify_invariants();
+    assert_eq!(layout.grid_focused_window_id(), Some(3));
+}
+
+#[test]
 fn grid_unminimize_in_place_keeps_the_grid_open_and_focused() {
     // Pressing minimize on an already-minimized cell restores it without activating, so the grid
     // stays open on the window and the previously active window keeps the activation.

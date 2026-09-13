@@ -3681,6 +3681,10 @@ impl<W: LayoutElement> Workspace<W> {
 
     /// Minimizes or restores a window in place.
     pub fn set_window_minimized(&mut self, id: &W::Id, minimize: bool) -> bool {
+        // Read before the layout changes: the grid focus is resolved through the items, and
+        // minimizing shifts those underneath it.
+        let prev_grid_focus = self.grid_focused_window_id();
+
         let in_floating = self.floating.has_window(id);
         let changed = if in_floating {
             self.floating.set_window_minimized(id, minimize)
@@ -3720,7 +3724,15 @@ impl<W: LayoutElement> Workspace<W> {
         }
 
         if self.is_grid_overview_open() {
-            let focus = (!minimize).then(|| id.clone());
+            // Minimizing leaves the grid focus alone: the cell is still right there, only marked
+            // now, and pressing minimize again restores it. Following the strip's activation
+            // instead — which minimizing hands to some neighbor — flung the focus across the grid.
+            // Restoring focuses the restored window, as activating it from the grid does.
+            let focus = if minimize {
+                prev_grid_focus
+            } else {
+                Some(id.clone())
+            };
             // Minimizing and restoring insert/remove a column, which animates the neighbors in the
             // strip. Nothing of the strip is on screen while the grid is up, but the grid reads the
             // columns' render offsets to know where a cell flies back to, so a still-running offset
