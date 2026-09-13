@@ -21,6 +21,7 @@ moving a window with `move-column-left`/`move-column-right` steps onto the minim
 Outside the grid overview minimized windows are invisible, so moves there jump over them as before.
 
 Pressing [`minimize-window`](./Configuration:-Key-Bindings.md#minimize-window) on a minimized cell restores the window in place: it goes back into the layout, loses its frame, and the grid stays open on it.
+Minimizing works the same way round, so the grid focus stays on the cell you acted on either way, and the two are each other's undo.
 Activating the cell (`Return`, or a click) restores it too, but also focuses it and closes the grid.
 
 ### Configuration
