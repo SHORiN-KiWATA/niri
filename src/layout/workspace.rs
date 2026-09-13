@@ -21,7 +21,9 @@ use tracing::debug;
 
 use super::floating::{FloatingSpace, FloatingSpaceRenderElement};
 use super::focus_ring::FocusRingRenderElement;
-use super::grid_overview::{GridDirection, GridEntryInfo, GridItem, GridOverview};
+use super::grid_overview::{
+    GridDirection, GridEntryInfo, GridItem, GridOverview, MinimizedHighlightEntry,
+};
 use super::scrolling::{
     Column, ColumnWidth, MoveTargets, ScrollDirection, ScrollingSpace, ScrollingSpaceRenderElement,
 };
@@ -1383,26 +1385,31 @@ impl<W: LayoutElement> Workspace<W> {
         let config = self.options.grid_overview.minimized_highlight;
         let scale = self.scale.fractional_scale();
 
+        // Every cell is passed along, not just the minimized ones: a cell that was just restored
+        // still has a highlight fading out, and it keeps following that cell's size.
         let mut entries = Vec::new();
         if !config.off {
             if let Some(go) = &self.grid_overview {
                 if go.open || go.progress.is_some() {
                     for (item, info) in &go.layout.entries {
                         let id = item.window_id();
-                        let Some(win) = self
-                            .windows()
-                            .find(|win| win.id() == id && win.is_minimized())
-                        else {
+                        let Some(win) = self.windows().find(|win| win.id() == id) else {
                             continue;
                         };
                         let is_urgent = win.is_urgent();
+                        let is_minimized = win.is_minimized();
 
                         let (_, visual_scale) = self.grid_item_visual_transform(go, item, info);
                         let source_size = info.target_size.downscale(info.target_scale.max(0.0001));
                         let visual_size = source_size.upscale(visual_scale);
                         let size =
                             visual_size + Size::from((config.padding * 2., config.padding * 2.));
-                        entries.push((id.clone(), size, is_urgent));
+                        entries.push(MinimizedHighlightEntry {
+                            window: id.clone(),
+                            size,
+                            is_urgent,
+                            is_minimized,
+                        });
                     }
                 }
             }

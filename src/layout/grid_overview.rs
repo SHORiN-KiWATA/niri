@@ -125,11 +125,11 @@ pub struct GridOverview<W: LayoutElement> {
     /// windows stay visible above the source grid they are crossing.
     pub flying_in_windows: Vec<W::Id>,
     added_window_ids: Vec<W::Id>,
-    /// Filled highlights drawn behind the cells of minimized windows, by window id.
+    /// Filled highlights drawn behind the cells of minimized windows.
     ///
     /// They live here rather than on the tiles because they are sized in screen space: a marker
     /// that scaled with the cell would get thinner the more windows the grid shows.
-    minimized_highlights: Vec<(W::Id, FocusRing)>,
+    minimized_highlights: Vec<MinimizedHighlight<W>>,
     /// col_idx → tile_idx for Column items that have multiple tiles.
     pub column_tile_focus: Vec<(usize, usize)>,
     pub clock: Clock,
@@ -812,7 +812,7 @@ impl<W: LayoutElement> GridOverview<W> {
     /// them, damage tracking) stay stable.
     pub(super) fn update_minimized_highlights(
         &mut self,
-        entries: &[(W::Id, Size<f64, Logical>, bool)],
+        entries: &[MinimizedHighlightEntry<W>],
         scale: f64,
     ) {
         let config = self.options.grid_overview.minimized_highlight;
@@ -822,38 +822,68 @@ impl<W: LayoutElement> GridOverview<W> {
         }
 
         // The marker fades in and out with the grid, like the minimized thumbnails themselves.
-        let alpha = self.progress_value().clamp(0., 1.) as f32;
+        let grid_alpha = self.progress_value().clamp(0., 1.);
+        let fade_config = self.options.animations.window_movement.0;
 
         let mut old = std::mem::take(&mut self.minimized_highlights);
-        for (id, size, is_urgent) in entries {
-            let mut ring = match old.iter().position(|(other, _)| other == id) {
-                Some(idx) => old.swap_remove(idx).1,
-                None => FocusRing::new(niri_config::FocusRing {
-                    off: false,
-                    width: 0.,
-                    active_gradient: None,
-                    urgent_gradient: None,
-                    ..Default::default()
-                }),
+        for entry in entries {
+            let id = &entry.window;
+            let target = if entry.is_minimized { 1. } else { 0. };
+
+            let mut highlight = match old.iter().position(|h| &h.window == id) {
+                Some(idx) => old.swap_remove(idx),
+                // Nothing to fade out for a window that never had a highlight.
+                None if target == 0. => continue,
+                None => MinimizedHighlight {
+                    window: id.clone(),
+                    ring: FocusRing::new(niri_config::FocusRing {
+                        off: false,
+                        width: 0.,
+                        active_gradient: None,
+                        urgent_gradient: None,
+                        ..Default::default()
+                    }),
+                    fade: Animation::new(self.clock.clone(), 0., 1., 0., fade_config),
+                },
             };
 
-            let mut ring_config = *ring.config();
+            // Minimizing or restoring while the grid is up would otherwise pop the frame in and
+            // out; fade it instead, over the same animation that carries the cells themselves.
+            if highlight.fade.to() != target {
+                highlight.fade =
+                    highlight
+                        .fade
+                        .restarted(highlight.fade.clamped_value(), target, 0.);
+            }
+
+            let fade = highlight.fade.clamped_value().clamp(0., 1.);
+            if target == 0. && (fade <= 0.0001 || highlight.fade.is_clamped_done()) {
+                continue;
+            }
+
+            let mut ring_config = *highlight.ring.config();
             ring_config.active_color = config.color;
             ring_config.urgent_color = config.urgent_color;
-            ring.update_config(ring_config);
-            ring.update_render_elements(
-                *size,
+            highlight.ring.update_config(ring_config);
+            highlight.ring.update_render_elements(
+                entry.size,
                 true,
                 false,
-                *is_urgent,
+                entry.is_urgent,
                 Rectangle::default(),
                 CornerRadius::from(config.corner_radius as f32),
                 scale,
-                alpha,
+                (grid_alpha * fade) as f32,
             );
 
-            self.minimized_highlights.push((id.clone(), ring));
+            self.minimized_highlights.push(highlight);
         }
+    }
+
+    fn minimized_highlights_animating(&self) -> bool {
+        self.minimized_highlights
+            .iter()
+            .any(|h| !h.fade.is_clamped_done())
     }
 
     pub(super) fn render_minimized_highlight(
@@ -863,15 +893,15 @@ impl<W: LayoutElement> GridOverview<W> {
         location: Point<f64, Logical>,
         push: &mut dyn FnMut(FocusRingRenderElement),
     ) {
-        let Some((_, ring)) = self
+        let Some(highlight) = self
             .minimized_highlights
             .iter()
-            .find(|(id, _)| id == window)
+            .find(|h| &h.window == window)
         else {
             return;
         };
 
-        ring.render(renderer, location, push);
+        highlight.ring.render(renderer, location, push);
     }
 
     pub(super) fn record_added_window(&mut self, id: W::Id) {
@@ -984,6 +1014,7 @@ impl<W: LayoutElement> GridOverview<W> {
         self.progress.as_ref().map_or(false, |p| p.is_animation())
             || self.rearrange_anim.is_some()
             || self.focus_boost_anim.is_some()
+            || self.minimized_highlights_animating()
     }
 }
 
@@ -1208,6 +1239,24 @@ impl<W: LayoutElement> GridLayout<W> {
     fn blend_scale(uniform_scale: f64, independent_scale: f64, independent_weight: f64) -> f64 {
         uniform_scale * (independent_scale / uniform_scale).powf(independent_weight)
     }
+}
+
+/// One grid cell, as input to [`GridOverview::update_minimized_highlights`].
+pub(super) struct MinimizedHighlightEntry<W: LayoutElement> {
+    pub window: W::Id,
+    /// On-screen size of the cell, already grown by the configured padding.
+    pub size: Size<f64, Logical>,
+    pub is_urgent: bool,
+    pub is_minimized: bool,
+}
+
+/// A highlight drawn behind the cell of a minimized window, with its own fade.
+#[derive(Debug)]
+struct MinimizedHighlight<W: LayoutElement> {
+    window: W::Id,
+    ring: FocusRing,
+    /// 0 while absent, 1 while fully shown; a fade-out is dropped once it reaches 0.
+    fade: Animation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

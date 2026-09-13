@@ -380,9 +380,21 @@ fn main() -> anyhow::Result<()> {
         )?;
         layout.unminimize_window(&1, false);
         for (t, name) in [
-            (2160, "d3_restore_early"),
-            (2260, "d4_restore_mid"),
-            (3000, "d5_restored"),
+            (2130, "d3_fadeout_early"),
+            (2180, "d4_fadeout_mid"),
+            (2260, "d5_fadeout_late"),
+            (3000, "d6_restored"),
+        ] {
+            capture(&mut env, &mut layout, t, &format!("{out_dir}/{name}.png"))?;
+        }
+
+        // And back: minimizing while the grid is up fades the frame in.
+        layout.set_window_minimized(&1, true);
+        for (t, name) in [
+            (3030, "d7_fadein_early"),
+            (3080, "d8_fadein_mid"),
+            (3160, "d9_fadein_late"),
+            (4000, "d10_minimized"),
         ] {
             capture(&mut env, &mut layout, t, &format!("{out_dir}/{name}.png"))?;
         }
