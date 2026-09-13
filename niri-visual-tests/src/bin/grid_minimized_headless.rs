@@ -352,5 +352,48 @@ fn main() -> anyhow::Result<()> {
         drop(windows);
     }
 
+    // Scenario D: minimizing an already-minimized cell restores it in place, with the grid
+    // staying open on it and its highlight going away.
+    {
+        let mut env = make_env()?;
+        let mut layout = make_layout(&env.clock, env.size, &env.output);
+        let mut windows = Vec::new();
+        for id in 0..3 {
+            windows.push(add_window(&mut layout, id, colors[id]));
+        }
+        layout.activate_window(&2);
+        layout.set_window_minimized(&1, true);
+        layout.toggle_grid_overview();
+
+        capture(
+            &mut env,
+            &mut layout,
+            2000,
+            &format!("{out_dir}/d1_minimized.png"),
+        )?;
+        layout.focus_left();
+        capture(
+            &mut env,
+            &mut layout,
+            2100,
+            &format!("{out_dir}/d2_focused.png"),
+        )?;
+        layout.unminimize_window(&1, false);
+        for (t, name) in [
+            (2160, "d3_restore_early"),
+            (2260, "d4_restore_mid"),
+            (3000, "d5_restored"),
+        ] {
+            capture(&mut env, &mut layout, t, &format!("{out_dir}/{name}.png"))?;
+        }
+        eprintln!(
+            "D: minimized={} grid_open={} grid_focus={:?}",
+            layout.is_window_minimized(&1),
+            layout.is_grid_overview_open(),
+            layout.grid_focused_window_id(),
+        );
+        drop(windows);
+    }
+
     Ok(())
 }

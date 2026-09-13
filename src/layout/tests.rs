@@ -8072,6 +8072,35 @@ fn grid_restore_does_not_leave_strip_move_animations() {
 }
 
 #[test]
+fn grid_unminimize_in_place_keeps_the_grid_open_and_focused() {
+    // Pressing minimize on an already-minimized cell restores it without activating, so the grid
+    // stays open on the window and the previously active window keeps the activation.
+    let mut layout = grid_with_minimized_middle(2);
+    let active_before = layout
+        .active_workspace()
+        .unwrap()
+        .active_window()
+        .map(|w| *w.id());
+
+    layout.unminimize_window(&2, false);
+    layout.verify_invariants();
+
+    assert!(!layout.is_window_minimized(&2));
+    assert!(layout.is_grid_overview_open());
+    assert_eq!(layout.grid_focused_window_id(), Some(2));
+    assert_window_order(&layout, [1, 2, 3]);
+    assert_eq!(
+        layout
+            .active_workspace()
+            .unwrap()
+            .active_window()
+            .map(|w| *w.id()),
+        active_before,
+        "restoring in place must not steal the activation"
+    );
+}
+
+#[test]
 fn grid_overview_picks_up_config_reloads() {
     // The overview is created once and then lives as long as its workspace, so it used to keep
     // serving the options it was first opened with: colors from an included file (matugen and

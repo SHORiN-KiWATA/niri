@@ -1056,7 +1056,16 @@ impl State {
             Action::MinimizeWindow => {
                 let focus = self.niri.layout.focus().map(|m| m.window.clone());
                 if let Some(window) = focus {
-                    self.minimize_window(&window);
+                    // The grid overview is where minimized windows live, so there the key doubles
+                    // as a toggle: pressing it on an already-minimized cell puts the window back
+                    // into the layout, in place, with the grid staying open on it.
+                    if self.niri.layout.is_grid_overview_open()
+                        && self.niri.layout.is_window_minimized(&window)
+                    {
+                        self.unminimize_window(&window, false);
+                    } else {
+                        self.minimize_window(&window);
+                    }
                 }
             }
             Action::MinimizeWindowById(id) => {
@@ -1082,7 +1091,13 @@ impl State {
             Action::ToggleWindowMinimized => {
                 let focus = self.niri.layout.focus().map(|m| m.window.clone());
                 if let Some(window) = focus {
-                    self.minimize_window(&window);
+                    if self.niri.layout.is_window_minimized(&window) {
+                        // Restoring from inside the grid overview keeps it open on the window.
+                        let activate = !self.niri.layout.is_grid_overview_open();
+                        self.unminimize_window(&window, activate);
+                    } else {
+                        self.minimize_window(&window);
+                    }
                 }
             }
             Action::ToggleWindowMinimizedById(id) => {
