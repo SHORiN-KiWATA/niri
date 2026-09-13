@@ -823,7 +823,17 @@ impl<W: LayoutElement> GridOverview<W> {
 
         // The marker fades in and out with the grid, like the minimized thumbnails themselves.
         let grid_alpha = self.progress_value().clamp(0., 1.);
-        let fade_config = self.options.animations.window_movement.0;
+        // An easing, not the window_movement spring: a spring starts from rest, so the first
+        // ~200ms sit under 6% opacity and the frame reads as popping in late. An ease-out moves
+        // right away and settles, which is what a fade should feel like. Global animation
+        // settings still apply: `off` here, and slowdown through the clock.
+        let fade_config = niri_config::Animation {
+            off: self.options.animations.off,
+            kind: niri_config::animations::Kind::Easing(niri_config::animations::EasingParams {
+                duration_ms: 200,
+                curve: niri_config::animations::Curve::EaseOutQuad,
+            }),
+        };
 
         let mut old = std::mem::take(&mut self.minimized_highlights);
         for entry in entries {
