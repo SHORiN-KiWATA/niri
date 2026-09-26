@@ -7,7 +7,6 @@ use anyhow::Context as _;
 use calloop::LoopHandle;
 use smithay::backend::allocator::format::FormatSet;
 use smithay::backend::allocator::gbm::GbmDevice;
-use smithay::backend::drm::DrmDeviceFd;
 use smithay::backend::renderer::element::utils::{
     Relocate, RelocateRenderElement, RescaleRenderElement,
 };
@@ -15,7 +14,7 @@ use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::desktop::Window;
 use smithay::output::Output;
 use smithay::reexports::gbm::Modifier;
-use smithay::utils::{Physical, Point, Scale, Size};
+use smithay::utils::{DeviceFd, Physical, Point, Scale, Size};
 
 use crate::dbus::mutter_screen_cast::{
     self, CursorMode, NodeIdSink, ScreenCastToNiri, StreamTargetId,
@@ -80,12 +79,7 @@ impl Screencasting {
 }
 
 impl State {
-    fn prepare_pw_cast(&mut self) -> anyhow::Result<(GbmDevice<DrmDeviceFd>, FormatSet)> {
-        let gbm = self
-            .backend
-            .gbm_device()
-            .context("no GBM device available")?;
-
+    fn prepare_pw_cast(&mut self) -> anyhow::Result<Option<(GbmDevice<DeviceFd>, FormatSet)>> {
         // Ensure PipeWire is initialized.
         if self.niri.casting.pipewire.is_none() {
             let pw = PipeWire::new(
@@ -95,6 +89,15 @@ impl State {
             .context("error initializing PipeWire")?;
             self.niri.casting.pipewire = Some(pw);
         }
+
+        if self.niri.config.borrow().debug.disable_pipewire_dmabuf {
+            return Ok(None);
+        }
+
+        let Some(gbm) = self.backend.gbm_device() else {
+            // We will offer shm only.
+            return Ok(None);
+        };
 
         let mut render_formats = self
             .backend
@@ -113,7 +116,7 @@ impl State {
             }
         }
 
-        Ok((gbm, render_formats))
+        Ok(Some((gbm, render_formats)))
     }
 
     pub fn on_pw_msg(&mut self, msg: PwToNiri) {
@@ -154,7 +157,7 @@ impl State {
             CastTarget::Nothing => {
                 self.backend.with_primary_renderer(|renderer| {
                     if cast.dequeue_buffer_and_clear(renderer) {
-                        cast.last_frame_time = get_monotonic_time();
+                        cast.record_frame_time(get_monotonic_time());
                     }
                 });
                 return;
@@ -243,7 +246,7 @@ impl State {
                     bbox.size,
                     scale,
                 ) {
-                    cast.last_frame_time = get_monotonic_time();
+                    cast.record_frame_time(get_monotonic_time());
                 }
             });
 
@@ -335,7 +338,7 @@ impl State {
             }
         };
 
-        let (gbm, render_formats) = match self.prepare_pw_cast() {
+        let gbm = match self.prepare_pw_cast() {
             Ok(x) => x,
             Err(err) => {
                 warn!("error starting pending screencasts: {err:?}");
@@ -359,7 +362,6 @@ impl State {
         for pending in self.niri.casting.pending_dynamic_casts.drain(..) {
             let res = pw.start_cast(
                 gbm.clone(),
-                render_formats.clone(),
                 pending.session_id,
                 pending.stream_id,
                 target.clone(),
@@ -442,7 +444,7 @@ impl State {
                     }
                 };
 
-                let (gbm, render_formats) = match self.prepare_pw_cast() {
+                let gbm = match self.prepare_pw_cast() {
                     Ok(x) => x,
                     Err(err) => {
                         warn!("error starting screencast: {err:?}");
@@ -454,7 +456,6 @@ impl State {
 
                 let res = pw.start_cast(
                     gbm,
-                    render_formats,
                     session_id,
                     stream_id,
                     target,
@@ -646,7 +647,7 @@ impl Niri {
             let cursor_data = cursor_data.as_ref().unwrap();
 
             if cast.dequeue_buffer_and_render(renderer, &elements, cursor_data, size, scale) {
-                cast.last_frame_time = target_presentation_time;
+                cast.record_frame_time(target_presentation_time);
             }
         }
         self.casting.casts = casts;
@@ -733,7 +734,7 @@ impl Niri {
             let cursor_data = CursorData::compute(&elements, main_start, pointer_location, scale);
 
             if cast.dequeue_buffer_and_render(renderer, &elements, &cursor_data, bbox.size, scale) {
-                cast.last_frame_time = target_presentation_time;
+                cast.record_frame_time(target_presentation_time);
             }
         }
         self.casting.casts = casts;
