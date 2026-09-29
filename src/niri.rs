@@ -211,6 +211,9 @@ const CLEAR_COLOR_LOCKED: [f32; 4] = [0.3, 0.1, 0.1, 1.];
 // should be ~1.995 seconds.
 const FRAME_CALLBACK_THROTTLE: Option<Duration> = Some(Duration::from_millis(995));
 
+/// Fraction of the visible area that one move-magnifier step moves the magnified view by.
+const MAGNIFIER_MOVE_STEP: f64 = 0.05;
+
 pub struct Niri {
     pub config: Rc<RefCell<Config>>,
 
@@ -4767,6 +4770,45 @@ impl Niri {
         true
     }
 
+    /// Moves the locked magnifier center by `dx` and `dy` steps.
+    pub fn move_magnifier_center(&mut self, dx: f64, dy: f64) {
+        if !self.can_drag_magnifier_center() {
+            return;
+        }
+
+        let locked = self
+            .magnifier_center
+            .borrow()
+            .as_ref()
+            .and_then(|(weak, center)| Some((weak.upgrade()?, *center)));
+        let (output, center) = match locked {
+            Some(locked) => locked,
+            None => {
+                // The center locks on the first magnified frame. If that frame hasn't happened
+                // yet, start from the pointer, like compute_magnifier_params() would.
+                let pointer_pos = self
+                    .tablet_cursor_location
+                    .unwrap_or_else(|| self.seat.get_pointer().unwrap().current_location());
+                let Some((output, pos_within_output)) = self.output_under(pointer_pos) else {
+                    return;
+                };
+                let output_scale = Scale::from(output.current_scale().fractional_scale());
+                let center = pos_within_output.to_physical_precise_round(output_scale);
+                (output.clone(), center)
+            }
+        };
+
+        let size = output.current_mode().unwrap().size;
+        let size = output.current_transform().transform_size(size);
+        let zoom = self.magnifier_zoom;
+        let delta = Point::<f64, Physical>::from((
+            dx * magnifier_move_step(size.w, zoom),
+            dy * magnifier_move_step(size.h, zoom),
+        ));
+        let center = (center.to_f64() + delta).to_i32_round();
+        self.set_magnifier_center(&output, center);
+    }
+
     fn clamp_magnifier_center_to_output(
         &self,
         output: &Output,
@@ -8960,6 +9002,16 @@ impl<'render>
     }
 }
 
+/// Returns how far one move-magnifier step moves the center across an output `size` pixels long.
+///
+/// The magnifier center is the zoom pivot rather than the middle of the view: moving it by `d`
+/// moves the view by `d * (1 - 1 / zoom)`. Dividing by that keeps a step at the same fraction of
+/// the visible area at any zoom level.
+fn magnifier_move_step(size: i32, zoom: f64) -> f64 {
+    let visible = f64::from(size) / zoom;
+    visible * MAGNIFIER_MOVE_STEP / (1. - 1. / zoom)
+}
+
 #[cfg(feature = "xdp-gnome-screencast")]
 fn should_render_screen_cast_picker(rendering_output: bool, intent: RenderIntent) -> bool {
     // Render the picker into screencasts and screen captures (screencopy, i.e. wf-recorder and
@@ -9000,5 +9052,27 @@ mod screen_cast_picker_preview_tests {
             false,
             RenderIntent::PickerPreview
         ));
+    }
+}
+
+#[cfg(test)]
+mod magnifier_tests {
+    use super::*;
+
+    #[test]
+    fn move_step_is_the_same_share_of_the_view_at_any_zoom() {
+        let size = 2560;
+        for zoom in [1.2, 2., 3., 10.] {
+            // Zooming around pivot p shows the area starting at p * (1 - 1 / zoom).
+            let view_x = |pivot: f64| pivot * (1. - 1. / zoom);
+
+            let pivot = 1000.;
+            let moved = view_x(pivot + magnifier_move_step(size, zoom)) - view_x(pivot);
+            let visible = f64::from(size) / zoom;
+            assert!(
+                (moved - visible * MAGNIFIER_MOVE_STEP).abs() < 1e-9,
+                "zoom {zoom}"
+            );
+        }
     }
 }

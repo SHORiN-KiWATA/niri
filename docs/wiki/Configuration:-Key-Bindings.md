@@ -485,3 +485,20 @@ binds {
     Mod+WheelScrollDown { adjust-magnifier-zoom -0.1; }
 }
 ```
+
+#### `move-magnifier-left`, `move-magnifier-right`, `move-magnifier-up`, `move-magnifier-down`
+
+<sup>Since: next release</sup>
+
+Move the magnified view in the given direction.
+Each step moves the view by 1/20 of the visible area, whatever the zoom level, and holding the key repeats it.
+These actions only work while the magnifier is on with [`magnifier.track-cursor false`](./Configuration:-Miscellaneous.md#track-cursor); otherwise they do nothing.
+
+```kdl
+binds {
+    Mod+Ctrl+Alt+H { move-magnifier-left; }
+    Mod+Ctrl+Alt+J { move-magnifier-down; }
+    Mod+Ctrl+Alt+K { move-magnifier-up; }
+    Mod+Ctrl+Alt+L { move-magnifier-right; }
+}
+```

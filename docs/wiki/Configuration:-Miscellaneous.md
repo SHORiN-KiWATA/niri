@@ -596,7 +596,7 @@ magnifier {
 #### `track-cursor`
 
 When enabled (default), the magnifier follows the cursor position. Set to `false` to lock the magnification center to the cursor position at first activation, keeping the screen fixed regardless of cursor movement.
-When the magnifier is active with `track-cursor false`, hold the middle mouse button and drag to move the locked center.
+When the magnifier is active with `track-cursor false`, hold the middle mouse button and drag to move the locked center, or use the [`move-magnifier-*`](./Configuration:-Key-Bindings.md#move-magnifier-left-move-magnifier-right-move-magnifier-up-move-magnifier-down) actions.
 
 ```kdl
 magnifier {

@@ -2564,6 +2564,18 @@ impl State {
             Action::AdjustMagnifierZoom(delta) => {
                 self.niri.adjust_magnifier_zoom(delta);
             }
+            Action::MoveMagnifierLeft => {
+                self.niri.move_magnifier_center(-1., 0.);
+            }
+            Action::MoveMagnifierRight => {
+                self.niri.move_magnifier_center(1., 0.);
+            }
+            Action::MoveMagnifierUp => {
+                self.niri.move_magnifier_center(0., -1.);
+            }
+            Action::MoveMagnifierDown => {
+                self.niri.move_magnifier_center(0., 1.);
+            }
             Action::ToggleOverview => {
                 self.niri.layout.toggle_overview();
                 self.niri.queue_redraw_all();
@@ -5526,9 +5538,13 @@ fn allowed_during_screenshot(action: &Action) -> bool {
             // Intended for binds such as volume up/down, lock the screen, etc.
             | Action::Spawn(_)
             | Action::SpawnSh(_)
-            // Magnifier can be toggled and adjusted during screenshot.
+            // Magnifier can be toggled, adjusted and moved during screenshot.
             | Action::ToggleMagnifier
             | Action::AdjustMagnifierZoom(_)
+            | Action::MoveMagnifierLeft
+            | Action::MoveMagnifierRight
+            | Action::MoveMagnifierUp
+            | Action::MoveMagnifierDown
             // The screenshot UI can handle these.
             | Action::MoveColumnLeft
             | Action::MoveColumnLeftOrToMonitorLeft
