@@ -494,6 +494,8 @@ Move the magnified view in the given direction.
 Each step moves the view by 1/20 of the visible area, whatever the zoom level, and holding the key repeats it.
 These actions only work while the magnifier is on with [`magnifier.track-cursor false`](./Configuration:-Miscellaneous.md#track-cursor); otherwise they do nothing.
 
+To reuse keys that normally do something else, put these actions into the [magnifier `binds {}` section](./Configuration:-Miscellaneous.md#binds) instead: those binds only take over while the magnifier is on.
+
 ```kdl
 binds {
     Mod+Ctrl+Alt+H { move-magnifier-left; }

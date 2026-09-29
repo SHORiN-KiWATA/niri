@@ -745,6 +745,58 @@ mod tests {
     }
 
     #[test]
+    fn magnifier_binds_parse() {
+        let config = Config::parse_mem(
+            r#"
+            magnifier {
+                binds {
+                    Mod+H { move-magnifier-left; }
+                    Mod+J allow-inhibiting=false { move-magnifier-down; }
+                    Mod+K repeat=false { move-magnifier-up; }
+                    Escape { toggle-magnifier; }
+                    Mod+Escape repeat=false { toggle-magnifier; }
+                }
+            }
+            "#,
+        )
+        .unwrap();
+
+        let binds = &config.magnifier.binds;
+        let actions: Vec<_> = binds.iter().map(|bind| bind.action.clone()).collect();
+        assert_eq!(
+            actions,
+            [
+                Action::MoveMagnifierLeft,
+                Action::MoveMagnifierDown,
+                Action::MoveMagnifierUp,
+                Action::ToggleMagnifier,
+                Action::ToggleMagnifier,
+            ]
+        );
+        assert!(binds[0].repeat);
+        assert!(!binds[1].allow_inhibiting);
+        assert!(!binds[2].repeat);
+        // Repeating a toggle would turn the magnifier back on, so it doesn't repeat by default.
+        assert!(!binds[3].repeat);
+        assert!(!binds[4].repeat);
+    }
+
+    #[test]
+    fn magnifier_binds_reject_other_actions_and_keys() {
+        let valid = "magnifier { binds { Mod+H { move-magnifier-left; }; }; }";
+        assert!(Config::parse_mem(valid).is_ok());
+
+        for text in [
+            "magnifier { binds { Mod+H { focus-column-left; }; }; }",
+            "magnifier { binds { Mod+WheelScrollUp { move-magnifier-up; }; }; }",
+            "magnifier { binds { Mod+H { move-magnifier-left; }; Mod+H { toggle-magnifier; }; }; }",
+            "magnifier { binds { Mod+H cooldown-ms=100 { move-magnifier-left; }; }; }",
+        ] {
+            assert!(Config::parse_mem(text).is_err(), "{text}");
+        }
+    }
+
+    #[test]
     fn screen_cast_picker_animation_parses() {
         let config = Config::parse_mem(
             r#"
@@ -1997,6 +2049,7 @@ mod tests {
                 zoom_factor: 2.0,
                 track_cursor: true,
                 scale_cursor: true,
+                binds: [],
             },
             environment: Environment(
                 [
