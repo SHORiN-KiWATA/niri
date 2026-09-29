@@ -653,7 +653,7 @@ magnifier {
 }
 ```
 
-The toggle animation can be customized in the [`animations`](./Configuration:-Animations.md) section under `magnifier`:
+The toggle and move animations can be customized in the [`animations`](./Configuration:-Animations.md) section under `magnifier`:
 
 ```kdl
 animations {
