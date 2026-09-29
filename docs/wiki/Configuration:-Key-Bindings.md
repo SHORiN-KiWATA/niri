@@ -473,6 +473,8 @@ binds {
 }
 ```
 
+#### `adjust-magnifier-zoom`
+
 <sup>Since: 26.04</sup>
 
 Adjust the screen magnifier zoom by the given delta. Positive values zoom in, negative values zoom out. The zoom ranges from `1.0` (no zoom) to `10.0`. Zooming down to `1.0` turns the magnifier off. This action responds instantly without animation, making it suitable for scroll wheel binds.
