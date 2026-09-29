@@ -2834,6 +2834,7 @@ mod tests {
         // will not have any binds. Clear them out so they don't spam the diff.
         default_config.window_rules.clear();
         default_config.binds.0.clear();
+        default_config.magnifier.binds.clear();
 
         assert_snapshot!(
             diff_lines(
@@ -2864,6 +2865,9 @@ mod tests {
 
         -                0.6666666666666666,
         +                0.66667,
+
+        -        track_cursor: true,
+        +        track_cursor: false,
         "#,
         );
     }
