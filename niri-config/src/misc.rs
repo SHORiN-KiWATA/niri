@@ -192,6 +192,8 @@ pub struct Magnifier {
     pub zoom_factor: f64,
     pub track_cursor: bool,
     pub scale_cursor: bool,
+    /// Fraction of the visible area that one move-magnifier step moves the view by.
+    pub move_step: f64,
     /// Binds that take precedence over the regular binds while the magnifier is on.
     pub binds: Vec<Bind>,
 }
@@ -203,6 +205,7 @@ impl Default for Magnifier {
             zoom_factor: 2.0,
             track_cursor: true,
             scale_cursor: true,
+            move_step: 0.05,
             binds: Vec::new(),
         }
     }
@@ -220,6 +223,8 @@ pub struct MagnifierPart {
     pub track_cursor: Option<Flag>,
     #[knuffel(child)]
     pub scale_cursor: Option<Flag>,
+    #[knuffel(child, unwrap(argument))]
+    pub move_step: Option<FloatOrInt<0, 1>>,
     #[knuffel(child)]
     pub binds: Option<MagnifierBinds>,
 }
@@ -230,7 +235,13 @@ impl MergeWith<MagnifierPart> for Magnifier {
         if part.on {
             self.off = false;
         }
-        merge!((self, part), zoom_factor, track_cursor, scale_cursor);
+        merge!(
+            (self, part),
+            zoom_factor,
+            track_cursor,
+            scale_cursor,
+            move_step
+        );
 
         if let Some(part) = &part.binds {
             // Remove existing binds matching any new bind.

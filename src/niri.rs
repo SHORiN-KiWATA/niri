@@ -211,9 +211,6 @@ const CLEAR_COLOR_LOCKED: [f32; 4] = [0.3, 0.1, 0.1, 1.];
 // should be ~1.995 seconds.
 const FRAME_CALLBACK_THROTTLE: Option<Duration> = Some(Duration::from_millis(995));
 
-/// Fraction of the visible area that one move-magnifier step moves the magnified view by.
-const MAGNIFIER_MOVE_STEP: f64 = 0.05;
-
 pub struct Niri {
     pub config: Rc<RefCell<Config>>,
 
@@ -4843,9 +4840,10 @@ impl Niri {
         let size = output.current_mode().unwrap().size;
         let size = output.current_transform().transform_size(size);
         let zoom = self.magnifier_zoom;
+        let step = self.config.borrow().magnifier.move_step;
         let delta = Point::<f64, Physical>::from((
-            dx * magnifier_move_step(size.w, zoom),
-            dy * magnifier_move_step(size.h, zoom),
+            dx * magnifier_move_step(size.w, zoom, step),
+            dy * magnifier_move_step(size.h, zoom, step),
         ));
         let target = (center.to_f64() + delta).to_i32_round();
         let target = self.clamp_magnifier_center_to_output(&output, target);
@@ -9082,14 +9080,15 @@ impl<'render>
     }
 }
 
-/// Returns how far one move-magnifier step moves the center across an output `size` pixels long.
+/// Returns how far one move-magnifier step moves the center across an output `size` pixels long,
+/// for a step that is `step` of the visible area.
 ///
 /// The magnifier center is the zoom pivot rather than the middle of the view: moving it by `d`
 /// moves the view by `d * (1 - 1 / zoom)`. Dividing by that keeps a step at the same fraction of
 /// the visible area at any zoom level.
-fn magnifier_move_step(size: i32, zoom: f64) -> f64 {
+fn magnifier_move_step(size: i32, zoom: f64, step: f64) -> f64 {
     let visible = f64::from(size) / zoom;
-    visible * MAGNIFIER_MOVE_STEP / (1. - 1. / zoom)
+    visible * step / (1. - 1. / zoom)
 }
 
 #[cfg(feature = "xdp-gnome-screencast")]
@@ -9142,17 +9141,15 @@ mod magnifier_tests {
     #[test]
     fn move_step_is_the_same_share_of_the_view_at_any_zoom() {
         let size = 2560;
+        let step = 0.05;
         for zoom in [1.2, 2., 3., 10.] {
             // Zooming around pivot p shows the area starting at p * (1 - 1 / zoom).
             let view_x = |pivot: f64| pivot * (1. - 1. / zoom);
 
             let pivot = 1000.;
-            let moved = view_x(pivot + magnifier_move_step(size, zoom)) - view_x(pivot);
+            let moved = view_x(pivot + magnifier_move_step(size, zoom, step)) - view_x(pivot);
             let visible = f64::from(size) / zoom;
-            assert!(
-                (moved - visible * MAGNIFIER_MOVE_STEP).abs() < 1e-9,
-                "zoom {zoom}"
-            );
+            assert!((moved - visible * step).abs() < 1e-9, "zoom {zoom}");
         }
     }
 }

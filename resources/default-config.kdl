@@ -403,6 +403,9 @@ magnifier {
     // Whether the cursor itself is scaled along with the magnified content.
     scale-cursor true
 
+    // How far one move-magnifier step moves the view, as a fraction of the visible area.
+    move-step 0.05
+
     // Binds that only work while the magnifier is on. They take precedence over
     // the regular binds, so here the focus keys move the magnified view instead.
     // Only move-magnifier-* and toggle-magnifier are allowed here.

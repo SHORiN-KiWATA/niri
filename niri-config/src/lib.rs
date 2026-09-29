@@ -745,6 +745,15 @@ mod tests {
     }
 
     #[test]
+    fn magnifier_move_step_parses() {
+        let config = Config::parse_mem("magnifier { move-step 0.1; }").unwrap();
+        assert_eq!(config.magnifier.move_step, 0.1);
+
+        assert!(Config::parse_mem("magnifier { move-step 1.5; }").is_err());
+        assert!(Config::parse_mem("magnifier { move-step -0.1; }").is_err());
+    }
+
+    #[test]
     fn magnifier_binds_parse() {
         let config = Config::parse_mem(
             r#"
@@ -2049,6 +2058,7 @@ mod tests {
                 zoom_factor: 2.0,
                 track_cursor: true,
                 scale_cursor: true,
+                move_step: 0.05,
                 binds: [],
             },
             environment: Environment(

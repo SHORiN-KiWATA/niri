@@ -491,7 +491,7 @@ binds {
 <sup>Since: next release</sup>
 
 Move the magnified view in the given direction.
-Each step moves the view by 1/20 of the visible area, whatever the zoom level, and holding the key repeats it.
+Each step moves the view by [`magnifier.move-step`](./Configuration:-Miscellaneous.md#move-step) of the visible area (1/20 by default), whatever the zoom level, and holding the key repeats it.
 The movement uses the [`magnifier` animation](./Configuration:-Animations.md#magnifier), and the steps of a held key chain into one smooth movement.
 These actions only work while the magnifier is on with [`magnifier.track-cursor false`](./Configuration:-Miscellaneous.md#track-cursor); otherwise they do nothing.
 

@@ -616,6 +616,23 @@ magnifier {
 }
 ```
 
+#### `move-step`
+
+<sup>Since: next release</sup>
+
+How far one [`move-magnifier-*`](./Configuration:-Key-Bindings.md#move-magnifier-left-move-magnifier-right-move-magnifier-up-move-magnifier-down) step moves the view, as a fraction of the visible area, from `0.0` to `1.0`.
+The step looks the same at any zoom level.
+Defaults to `0.05`.
+
+Holding a key repeats the step at your keyboard [repeat rate](./Configuration:-Input.md#repeat), so this also sets how fast the view moves while you hold the key.
+
+```kdl
+magnifier {
+    track-cursor false
+    move-step 0.1
+}
+```
+
 #### `binds`
 
 <sup>Since: next release</sup>
@@ -626,7 +643,7 @@ While it is off, they do nothing and the keys work as usual.
 
 Only these actions are allowed here:
 
-- `move-magnifier-left`, `move-magnifier-right`, `move-magnifier-up`, `move-magnifier-down`: move the magnified view by 1/20 of the visible area.
+- `move-magnifier-left`, `move-magnifier-right`, `move-magnifier-up`, `move-magnifier-down`: move the magnified view by [`move-step`](#move-step) of the visible area.
 They only apply with `track-cursor false`; with the magnifier following the cursor, these keys work as usual.
 Holding the key repeats the step.
 - `toggle-magnifier`: turn the magnifier off.
