@@ -2255,6 +2255,7 @@ mod tests {
                     ignore_grid_overview: Some(
                         true,
                     ),
+                    minimize_to_tray: None,
                     background_effect: BackgroundEffectRule {
                         xray: None,
                         blur: None,

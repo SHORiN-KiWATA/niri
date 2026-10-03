@@ -101,6 +101,7 @@ window-rule {
     clip-to-geometry true
     tiled-state true
     baba-is-float true
+    minimize-to-tray false
 
     background-effect {
         xray true
@@ -969,6 +970,33 @@ window-rule {
     match is-floating=false
 
     tiled-state true
+}
+```
+
+#### `minimize-to-tray`
+
+Control whether minimizing the window hides it to the system tray.
+
+Wayland has no way to tell an app that it was minimized, so apps with a "minimize to tray" option never find out and would otherwise stay around as a minimized window.
+Such apps do hide to the tray when asked to close, so when niri minimizes a window whose app shows a tray icon (a StatusNotifierItem owned by the app's process or one of its child processes), it also asks the window to close.
+The app then hides the window to the tray, which removes it from the layout, and you bring it back from the tray icon as usual.
+
+Set this to `true` to always do this for a window, for example for sandboxed apps whose tray icon niri can't match to the window.
+Set this to `false` to keep the window around as a regular minimized window, for apps that quit rather than hide to the tray when their window is closed.
+
+```kdl
+// Always hide Telegram to the tray when minimizing it.
+window-rule {
+    match app-id=r#"^org\.telegram\.desktop$"#
+
+    minimize-to-tray true
+}
+
+// Keep an app that quits when its window is closed as a regular minimized window.
+window-rule {
+    match app-id=r#"^org\.example\.App$"#
+
+    minimize-to-tray false
 }
 ```
 

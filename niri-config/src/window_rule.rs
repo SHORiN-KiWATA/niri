@@ -83,6 +83,8 @@ pub struct WindowRule {
     pub tiled_state: Option<bool>,
     #[knuffel(child, unwrap(argument))]
     pub ignore_grid_overview: Option<bool>,
+    #[knuffel(child, unwrap(argument))]
+    pub minimize_to_tray: Option<bool>,
     #[knuffel(child, default)]
     pub background_effect: BackgroundEffectRule,
     #[knuffel(child, default)]

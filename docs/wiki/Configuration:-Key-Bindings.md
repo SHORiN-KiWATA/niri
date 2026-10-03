@@ -208,6 +208,9 @@ The grid focus stays on that cell in both directions, so you can undo a minimize
 
 Use `unminimize-window` to restore the most recently minimized window, or `toggle-window-minimized` to switch the focused window between the two states.
 
+Apps that show a tray icon are hidden to the tray instead: niri asks their window to close, which these apps handle by hiding to the tray, and you bring them back from the tray icon.
+See the [`minimize-to-tray`](./Configuration:-Window-Rules.md#minimize-to-tray) window rule to change this per app.
+
 #### `spawn`
 
 Run a program.

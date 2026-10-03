@@ -132,6 +132,11 @@ pub struct ResolvedWindowRules {
     /// Whether to keep floating windows out of the grid overview.
     pub ignore_grid_overview: Option<bool>,
 
+    /// Whether minimizing the window hides it to the system tray.
+    ///
+    /// `None` means to do it automatically when the app has a tray icon.
+    pub minimize_to_tray: Option<bool>,
+
     /// Background effect configuration.
     pub background_effect: BackgroundEffect,
 
@@ -327,6 +332,9 @@ impl ResolvedWindowRules {
                 }
                 if let Some(x) = rule.ignore_grid_overview {
                     resolved.ignore_grid_overview = Some(x);
+                }
+                if let Some(x) = rule.minimize_to_tray {
+                    resolved.minimize_to_tray = Some(x);
                 }
 
                 resolved

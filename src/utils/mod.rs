@@ -43,6 +43,8 @@ pub mod scale;
 pub mod signals;
 pub mod spawning;
 pub mod transaction;
+#[cfg(feature = "dbus")]
+pub mod tray;
 pub mod vblank_throttle;
 pub mod watcher;
 pub mod xwayland;
