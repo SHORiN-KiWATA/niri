@@ -2749,68 +2749,8 @@ impl State {
             self.maybe_warp_cursor_to_focus();
         }
 
-        self.minimize_to_tray(window);
-
         // FIXME: granular.
         self.niri.queue_redraw_all();
-    }
-
-    /// Hides a just-minimized window to the system tray, if its app lives there.
-    ///
-    /// Wayland has no way to tell a client that it was minimized, so apps that minimize to the
-    /// tray never find out and stay around as a minimized window. Such apps do hide to the tray
-    /// when asked to close though, so ask them to. When the app unmaps the window in response, it
-    /// leaves the layout, and it maps again once restored from the tray.
-    fn minimize_to_tray(&mut self, window: &Window) {
-        let surface = window.toplevel().expect("no X11 support").wl_surface();
-        let Some((mapped, _)) = self.niri.layout.find_window_and_output(surface) else {
-            return;
-        };
-
-        match mapped.rules().minimize_to_tray {
-            Some(false) => (),
-            Some(true) => mapped.toplevel().send_close(),
-            None => {
-                // Automatically do it for apps that show a tray icon.
-                #[cfg(feature = "dbus")]
-                {
-                    let Some(pid) = mapped.credentials().map(|c| c.pid) else {
-                        return;
-                    };
-
-                    let (tx, rx) = calloop::channel::sync_channel::<bool>(1);
-                    let window = window.clone();
-                    self.niri
-                        .event_loop
-                        .insert_source(rx, move |event, _, state| {
-                            if let calloop::channel::Event::Msg(true) = event {
-                                // Leave the window alone if it was restored in the meantime.
-                                if state.niri.layout.is_window_minimized(&window) {
-                                    window.toplevel().expect("no X11 support").send_close();
-                                }
-                            }
-                        })
-                        .unwrap();
-
-                    let res = thread::Builder::new()
-                        .name("Tray Icon Lookup".to_owned())
-                        .spawn(move || {
-                            let _span = tracy_client::span!("has_tray_item");
-
-                            let has_tray_item = crate::utils::tray::has_tray_item(pid)
-                                .unwrap_or_else(|err| {
-                                    debug!("error looking up tray items: {err:?}");
-                                    false
-                                });
-                            let _ = tx.send(has_tray_item);
-                        });
-
-                    if let Err(err) = res {
-                        warn!("error spawning a thread to look up tray items: {err:?}");
-                    }
-                }
-            }
-        }
     }
 
     /// Restores a minimized window, optionally focusing it.
