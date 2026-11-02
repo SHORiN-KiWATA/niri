@@ -20,6 +20,11 @@ const BTN_RIGHT: u32 = 0x111;
 pub struct PickColorGrab {
     start_data: PointerGrabStartData<State>,
     copy_to_clipboard: bool,
+    /// Buttons pressed during the grab. Their presses and releases never reach clients.
+    own_buttons: Vec<u32>,
+    /// The pick is over; the grab only waits for `own_buttons` to be released, so that the
+    /// releases don't reach clients and the pointer's pressed buttons stay in sync.
+    done: bool,
 }
 
 impl PickColorGrab {
@@ -27,10 +32,35 @@ impl PickColorGrab {
         Self {
             start_data,
             copy_to_clipboard,
+            own_buttons: Vec::new(),
+            done: false,
         }
     }
 
-    fn on_ungrab(&mut self, state: &mut State) {
+    /// Whether a button pressed before the grab started is still held, e.g. the click on a bar
+    /// button that launched the picker.
+    fn initiating_button_held(&self, handle: &PointerInnerHandle<'_, State>) -> bool {
+        handle
+            .current_pressed()
+            .iter()
+            .any(|button| !self.own_buttons.contains(button))
+    }
+
+    /// The client holding an initiating button keeps the pointer until the button is released,
+    /// like an implicit grab; everyone else loses it while picking.
+    fn focus(
+        &self,
+        handle: &PointerInnerHandle<'_, State>,
+    ) -> Option<(<State as SeatHandler>::PointerFocus, Point<f64, Logical>)> {
+        if self.initiating_button_held(handle) {
+            handle.current_focus()
+        } else {
+            None
+        }
+    }
+
+    fn finish(&mut self, state: &mut State) {
+        self.done = true;
         if let Some(tx) = state.niri.pick_color.take() {
             let _ = tx.send_blocking(None);
         }
@@ -73,9 +103,12 @@ impl PointerGrab<State> for PickColorGrab {
         _focus: Option<(<State as SeatHandler>::PointerFocus, Point<f64, Logical>)>,
         event: &MotionEvent,
     ) {
-        handle.motion(data, None, event);
-        data.update_pick_color_magnifier(event.location);
-        data.niri.queue_redraw_all();
+        let focus = self.focus(handle);
+        handle.motion(data, focus, event);
+        if !self.done {
+            data.update_pick_color_magnifier(event.location);
+            data.niri.queue_redraw_all();
+        }
     }
 
     fn relative_motion(
@@ -85,7 +118,8 @@ impl PointerGrab<State> for PickColorGrab {
         _focus: Option<(<State as SeatHandler>::PointerFocus, Point<f64, Logical>)>,
         event: &RelativeMotionEvent,
     ) {
-        handle.relative_motion(data, None, event);
+        let focus = self.focus(handle);
+        handle.relative_motion(data, focus, event);
     }
 
     fn button(
@@ -94,34 +128,52 @@ impl PointerGrab<State> for PickColorGrab {
         handle: &mut PointerInnerHandle<'_, State>,
         event: &ButtonEvent,
     ) {
-        if event.state != ButtonState::Pressed {
-            return;
-        }
-
-        // We're handling this press, don't send the release to the window.
-        data.niri.suppressed_buttons.insert(event.button);
-
-        match event.button {
-            BTN_LEFT => (),
-            // Right click cancels; the ungrab reports no color.
-            BTN_RIGHT => {
-                handle.unset_grab(self, data, event.serial, event.time, true);
-                return;
-            }
-            _ => return,
-        }
-
-        if let Some(tx) = data.niri.pick_color.take() {
-            let color = Self::pick_color_at_point(handle.current_location(), data);
-            if self.copy_to_clipboard {
-                if let Some(color) = &color {
-                    Self::copy_to_clipboard(color, data);
+        match event.state {
+            ButtonState::Pressed => {
+                self.own_buttons.push(event.button);
+                if !self.done {
+                    match event.button {
+                        BTN_LEFT => {
+                            if let Some(tx) = data.niri.pick_color.take() {
+                                let color =
+                                    Self::pick_color_at_point(handle.current_location(), data);
+                                if self.copy_to_clipboard {
+                                    if let Some(color) = &color {
+                                        Self::copy_to_clipboard(color, data);
+                                    }
+                                }
+                                let _ = tx.send_blocking(color);
+                            }
+                            self.finish(data);
+                        }
+                        // Right click cancels.
+                        BTN_RIGHT => self.finish(data),
+                        _ => (),
+                    }
                 }
             }
-            let _ = tx.send_blocking(color);
+            ButtonState::Released => {
+                if let Some(idx) = self.own_buttons.iter().position(|b| *b == event.button) {
+                    self.own_buttons.remove(idx);
+                } else {
+                    // The client saw this button's press, so it gets the release too.
+                    handle.button(data, event);
+                    if !self.initiating_button_held(handle) {
+                        let location = handle.current_location();
+                        let motion = MotionEvent {
+                            location,
+                            serial: event.serial,
+                            time: event.time,
+                        };
+                        handle.motion(data, None, &motion);
+                    }
+                }
+            }
         }
 
-        handle.unset_grab(self, data, event.serial, event.time, true);
+        if self.done && handle.current_pressed().is_empty() {
+            handle.unset_grab(self, data, event.serial, event.time, true);
+        }
     }
 
     fn axis(
@@ -223,6 +275,9 @@ impl PointerGrab<State> for PickColorGrab {
     }
 
     fn unset(&mut self, data: &mut State) {
-        self.on_ungrab(data);
+        // Once done, a new picker may already be open.
+        if !self.done {
+            self.finish(data);
+        }
     }
 }

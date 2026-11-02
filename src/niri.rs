@@ -2614,13 +2614,24 @@ impl State {
             location,
         };
         let grab = PickColorGrab::new(start_data, copy_to_clipboard);
-        pointer.set_grab(self, grab, SERIAL_COUNTER.next_serial(), Focus::Clear);
+        pointer.set_grab(self, grab, SERIAL_COUNTER.next_serial(), Focus::Keep);
         self.niri.pick_color = Some(tx);
         // The magnifier replaces the cursor.
         self.niri
             .cursor_manager
             .set_cursor_image(CursorImageStatus::Hidden);
-        self.update_pick_color_magnifier(location);
+        // The grab takes the pointer focus away here, unless a button is still held from the
+        // click that opened the picker: that client must get its release first.
+        let under = self.niri.contents_under(location);
+        pointer.motion(
+            self,
+            under.surface,
+            &MotionEvent {
+                location,
+                serial: SERIAL_COUNTER.next_serial(),
+                time: InputTime::now(),
+            },
+        );
         self.niri.queue_redraw_all();
     }
 
