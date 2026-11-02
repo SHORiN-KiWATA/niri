@@ -17,6 +17,7 @@ mod grid_focus_follows_mouse;
 mod grid_input;
 mod grid_scroll;
 mod layer_shell;
+mod pick_color;
 mod remove_output;
 mod transactions;
 mod virtual_pointer;
