@@ -2632,12 +2632,14 @@ impl State {
                 time: InputTime::now(),
             },
         );
+        self.update_pick_color_magnifier(location);
         self.niri.queue_redraw_all();
     }
 
     /// Captures the screen around the pointer and updates the color picker magnifier.
     ///
-    /// Must not lock the pointer: this is called from inside the pointer grab.
+    /// Renders, which may lock the pointer: never call this from inside a pointer grab, use
+    /// `PickColorUi::request_capture()` there.
     pub fn update_pick_color_magnifier(&mut self, location: Point<f64, Logical>) {
         if !self.niri.pick_color_ui.is_open() {
             return;

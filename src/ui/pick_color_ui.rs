@@ -41,7 +41,8 @@ pub enum PickColorUi {
         region: Option<Region>,
         magnifier: Option<Magnifier>,
         zoom: f64,
-        /// Whether an output was rendered since the region was last captured.
+        /// Whether the region needs a recapture: an output was rendered or the pointer moved
+        /// since it was last captured.
         rendered: Cell<bool>,
     },
 }
@@ -129,7 +130,17 @@ impl PickColorUi {
         magnifier_half(scale, zoom)
     }
 
-    /// Returns whether an output was rendered since the last call.
+    /// Asks for a recapture on the next refresh.
+    ///
+    /// Pointer grabs use this rather than capturing directly: they run with the pointer locked,
+    /// and rendering may lock it again (e.g. the cursor-following magnifier).
+    pub fn request_capture(&self) {
+        if let Self::Open { rendered, .. } = self {
+            rendered.set(true);
+        }
+    }
+
+    /// Returns whether a recapture is needed, see `request_capture()`.
     pub fn take_rendered(&self) -> bool {
         match self {
             Self::Open { rendered, .. } => rendered.replace(false),

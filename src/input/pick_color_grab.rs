@@ -106,7 +106,7 @@ impl PointerGrab<State> for PickColorGrab {
         let focus = self.focus(handle);
         handle.motion(data, focus, event);
         if !self.done {
-            data.update_pick_color_magnifier(event.location);
+            data.niri.pick_color_ui.request_capture();
             data.niri.queue_redraw_all();
         }
     }
@@ -179,7 +179,7 @@ impl PointerGrab<State> for PickColorGrab {
     fn axis(
         &mut self,
         data: &mut State,
-        handle: &mut PointerInnerHandle<'_, State>,
+        _handle: &mut PointerInnerHandle<'_, State>,
         details: AxisFrame,
     ) {
         // Scrolling zooms the magnifier, like hyprpicker.
@@ -189,7 +189,7 @@ impl PointerGrab<State> for PickColorGrab {
         };
         if steps != 0. {
             data.niri.pick_color_ui.zoom(-steps);
-            data.update_pick_color_magnifier(handle.current_location());
+            data.niri.pick_color_ui.request_capture();
             data.niri.queue_redraw_all();
         }
     }
