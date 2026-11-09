@@ -775,6 +775,8 @@ impl State {
                     time,
                     mods_changed,
                 );
+                #[cfg(feature = "agent")]
+                self.agent_user_key(event.key_code(), event.state(), time);
             }
             ShouldInterceptResult::InterceptAndHandle(_) | ShouldInterceptResult::InterceptOnly => {
                 if mods_changed {
@@ -3053,6 +3055,13 @@ impl State {
 
         pointer.frame(self);
 
+        #[cfg(feature = "agent")]
+        self.agent_user_motion(
+            self.niri.pointer_contents.surface.clone(),
+            new_pos,
+            event.time(),
+        );
+
         // contents_under() will return no surface when the hot corner should trigger, so
         // pointer.motion() will set the current focus to None.
         if let Some(action) = under
@@ -3163,6 +3172,13 @@ impl State {
         );
 
         pointer.frame(self);
+
+        #[cfg(feature = "agent")]
+        self.agent_user_motion(
+            self.niri.pointer_contents.surface.clone(),
+            pos,
+            event.time(),
+        );
 
         // contents_under() will return no surface when the hot corner should trigger, so
         // pointer.motion() will set the current focus to None.
@@ -3697,6 +3713,9 @@ impl State {
             },
         );
         pointer.frame(self);
+
+        #[cfg(feature = "agent")]
+        self.agent_user_button(button_code, button_state, event.time());
     }
 
     fn on_pointer_axis<I: InputBackend>(&mut self, event: I::PointerAxisEvent) {
@@ -4198,6 +4217,9 @@ impl State {
 
         pointer.axis(self, frame);
         pointer.frame(self);
+
+        #[cfg(feature = "agent")]
+        self.agent_user_axis(frame);
     }
 
     fn on_tablet_tool_axis<I: InputBackend>(&mut self, event: I::TabletToolAxisEvent)

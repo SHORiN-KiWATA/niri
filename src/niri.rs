@@ -1669,7 +1669,11 @@ impl State {
             }
 
             self.niri.keyboard_focus.clone_from(&focus);
+            #[cfg(feature = "agent")]
+            let agent_focus = focus.surface().cloned();
             keyboard.set_focus(self, focus.into_surface(), SERIAL_COUNTER.next_serial());
+            #[cfg(feature = "agent")]
+            self.agent_on_user_focus(agent_focus.as_ref());
 
             // FIXME: can be more granular.
             self.niri.queue_redraw_all();

@@ -1,11 +1,30 @@
 ---
 name: niri-agent
-description: Operate GUI apps on the user's niri desktop in the background through niri's agent seat (`niri msg agent`) — capture a window, click, type, press keys, launch apps — without moving the user's cursor or focus. Use when asked to operate, click, fill in, read or check something in a desktop app, browser or other GUI window on this machine. 操作桌面应用、点按钮、填表、在浏览器里打开网页、看某个窗口的画面时使用。
+description: Operate GUI apps on the user's niri desktop in the background through niri's agent seat (`niri msg agent`) — capture a window, click, type, press keys, launch apps — without moving the user's cursor or focus; prefers CLI and D-Bus routes when they can do the job. Use when asked to operate, click, fill in, read or check something in a desktop app, browser or other GUI window on this machine. 操作桌面应用、点按钮、填表、在浏览器里打开网页、看某个窗口的画面时使用。
 ---
 
 # 在 niri 桌面上操作图形界面应用
 
 你有自己的一套指针和键盘（agent seat），输入只进你指定 id 的窗口，不影响用户的光标、焦点和剪贴板。窗口在不在屏幕上都能操作。下文的 `agent-ui`、`agent-firefox` 在本文件同目录 `~/.claude/skills/niri-agent/`。
+
+## 先找接口，图形界面是最后手段
+
+点界面慢、容易点错。动手前先看任务能不能直接办：
+
+| 要做的事 | 先试 |
+|---|---|
+| 音量、麦克风 | `wpctl`（`wpctl set-volume @DEFAULT_AUDIO_SINK@ 40%`） |
+| 网络、Wi-Fi | `nmcli` |
+| 蓝牙 | `bluetoothctl` |
+| 播放、暂停、当前曲目 | `playerctl` |
+| 亮度 | `brightnessctl` |
+| 窗口、工作区、显示器 | `niri msg`（`niri msg action --help`） |
+| 通知 | 发：`notify-send`；看、关：`makoctl` |
+| GNOME/GTK 应用设置 | `gsettings list-recursively 应用 id` |
+| 读网页内容 | 不需要登录就直接 WebFetch / curl，不开浏览器 |
+| 其他应用 | `应用 --help` 有没有对应命令；D-Bus：`busctl --user list` 找服务，`busctl --user introspect 服务 路径` 看方法 |
+
+找不到可用的接口，或者任务本身就要看界面（检查显示效果、用户点名要在某个窗口里做），再用下面的图形界面操作。接口改的是用户的真实状态，跟点界面一样遵守最后「注意」里的规则；不要改用户的配置文件。
 
 ## 选窗口
 
@@ -88,6 +107,7 @@ niri msg agent --require-change key --id 7 ctrl+s
 - 不关用户的窗口；不可撤销的操作（发送、付款、删除）要用户明确要求才做。
 - 你的剪贴板是独立的，`ctrl+c` 的内容谁都读不到。要拿内容，就截图，或让应用存成文件。
 - 锁屏期间照常工作，不要碰锁屏界面。
+- 用户可以直接点你开的窗口来接管它（键盘焦点离开就交还）。接管期间你的所有输入动作都会被拒绝，截图和 `agent-ui` 照常。遇到登录、验证码、付款确认这类该由用户做的步骤，就告诉用户窗口 id 请他接管，做完后切走并告诉你，你再继续。
 
 | 报错 | 处理 |
 |---|---|
@@ -96,3 +116,4 @@ niri msg agent --require-change key --id 7 ctrl+s
 | `no window appeared within 30 s` | 按上表加 profile 参数 |
 | `is a capture of window A, not window B` | 给目标窗口重新截图 |
 | `the agent seat is off` | 告诉用户，不要改配置 |
+| `the user took over window N` | 用户正在用这个窗口：停下，不要重试，等用户说好了再继续 |

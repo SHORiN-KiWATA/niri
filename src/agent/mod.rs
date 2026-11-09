@@ -9,6 +9,7 @@
 
 pub mod cursor;
 mod receipt;
+mod takeover;
 
 use std::ffi::OsStr;
 use std::os::unix::net::UnixStream;
@@ -123,6 +124,8 @@ pub struct AgentState {
     cursor_window: Option<WlSurface>,
     /// Whether the agent cursor redraw timer runs.
     cursor_timer: bool,
+    /// The user operating agent windows.
+    takeover: takeover::Takeover,
 }
 
 impl AgentState {
@@ -170,6 +173,7 @@ impl AgentState {
             recent_clients: Vec::new(),
             cursor_window: None,
             cursor_timer: false,
+            takeover: Default::default(),
         }
     }
 
@@ -325,6 +329,11 @@ impl State {
             AgentAction::Key { id, .. } | AgentAction::Type { id, .. } => (*id, Device::Keyboard),
         };
 
+        if let Err(err) = self.agent_check_takeover() {
+            let _ = reply.try_send(Err(err));
+            return;
+        }
+
         let target = match self.agent_target(id, device) {
             Ok(target) => target,
             Err(err) => {
@@ -467,7 +476,8 @@ impl State {
     pub fn agent_opened(&mut self, toplevel: &ToplevelSurface) -> bool {
         let surface = toplevel.wl_surface();
         if is_agent_surface(surface) {
-            return true;
+            // Dialogs of an agent app that the user operates come up as usual.
+            return !self.agent_user_operates(surface);
         }
 
         let Some(agent) = &mut self.niri.agent else {

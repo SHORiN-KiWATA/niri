@@ -95,8 +95,13 @@ impl SeatHandler for State {
     }
 
     fn cursor_image(&mut self, seat: &Seat<Self>, mut image: CursorImageStatus) {
-        // Only the user's seat has a visible cursor.
-        if seat != &self.niri.seat {
+        // Only the user's seat has a visible cursor. While the user operates an agent app, the
+        // app sets it through the agent seat.
+        #[cfg(feature = "agent")]
+        let user_drives = self.agent_user_drives_pointer();
+        #[cfg(not(feature = "agent"))]
+        let user_drives = false;
+        if seat != &self.niri.seat && !user_drives {
             return;
         }
 
@@ -292,6 +297,16 @@ impl KeyboardShortcutsInhibitHandler for State {
 impl SelectionHandler for State {
     type SelectionUserData = Arc<[u8]>;
 
+    #[cfg(feature = "agent")]
+    fn new_selection(
+        &mut self,
+        ty: SelectionTarget,
+        source: Option<smithay::wayland::selection::SelectionSource>,
+        seat: Seat<Self>,
+    ) {
+        self.agent_new_selection(ty, source, &seat);
+    }
+
     fn send_selection(
         &mut self,
         _ty: SelectionTarget,
@@ -301,6 +316,12 @@ impl SelectionHandler for State {
         user_data: &Self::SelectionUserData,
     ) {
         let _span = tracy_client::span!("send_selection");
+
+        // Selections that sync the user's and the agent's clipboards.
+        #[cfg(feature = "agent")]
+        let Some(fd) = self.agent_send_selection(_ty, _mime_type.clone(), fd, user_data) else {
+            return;
+        };
 
         let buf = user_data.clone();
         thread::spawn(move || {
