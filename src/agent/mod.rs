@@ -44,6 +44,7 @@ use smithay::utils::{IsAlive, Physical, Point, Rectangle, Scale, Size, Transform
 use smithay::wayland::compositor::get_role;
 use smithay::wayland::shell::xdg::{PopupSurface, ToplevelSurface, XDG_POPUP_ROLE};
 use smithay::wayland::socket::ListeningSocketSource;
+use smithay::wayland::text_input::set_text_input_seat_redirect;
 
 use crate::cursor::XCursor;
 use crate::layout::LayoutElement as _;
@@ -133,11 +134,24 @@ impl AgentState {
         seat_state: &mut SeatState<State>,
         display: &DisplayHandle,
         config: &Config,
+        user_seat: &Seat<State>,
     ) -> Self {
         let mut seat = seat_state.new_wl_seat_with_filter(display, SEAT_NAME, |client| {
             client
                 .get_data::<ClientState>()
                 .is_none_or(|data| data.agent_client || !data.hide_agent_seat)
+        });
+
+        // Agent apps type through the agent seat, which has no input method: the agent types
+        // without one, and input methods must not see it (see HIDE_SEAT_FROM). Their text inputs
+        // belong to the user's seat instead, so that the user's input method works in them while
+        // the user's keyboard focus is on them, which is when the user takes them over.
+        let user_seat = user_seat.clone();
+        set_text_input_seat_redirect(&seat, move |client| {
+            let agent_client = client
+                .get_data::<ClientState>()
+                .is_some_and(|data| data.agent_client);
+            agent_client.then(|| user_seat.clone())
         });
 
         // Same layout as the user's keyboard, so key combinations resolve the same way.
