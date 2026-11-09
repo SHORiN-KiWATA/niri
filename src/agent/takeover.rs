@@ -16,6 +16,7 @@ use smithay::input::Seat;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::Resource as _;
 use smithay::utils::{IsAlive, Logical, Point, SERIAL_COUNTER};
+use smithay::wayland::input_method::InputMethodSeat;
 use smithay::wayland::selection::data_device::{
     clear_data_device_selection, current_data_device_selection_userdata,
     request_data_device_client_selection, set_data_device_selection,
@@ -403,9 +404,30 @@ impl State {
     /// Passes a key that the user's keyboard sent to its focus on to the agent app, when the
     /// focus is one of its windows.
     pub fn agent_user_key(&mut self, code: Keycode, state: KeyState, time: InputTime) {
+        self.agent_pass_user_key(code, state, time, false);
+    }
+
+    /// Passes a key that the user's input method didn't use on to the agent app, when the user's
+    /// keyboard focus is one of its windows.
+    pub fn agent_user_ime_key(&mut self, code: Keycode, state: KeyState, time: InputTime) {
+        self.agent_pass_user_key(code, state, time, true);
+    }
+
+    fn agent_pass_user_key(
+        &mut self,
+        code: Keycode,
+        state: KeyState,
+        time: InputTime,
+        from_input_method: bool,
+    ) {
         if self.niri.agent.is_none() {
             return;
         }
+
+        // Agent apps share the user's input method (see AgentState::new). While it holds the
+        // keyboard, keys go to it first, and it sends the ones it doesn't use back.
+        let to_input_method =
+            !from_input_method && self.niri.seat.input_method().keyboard_grabbed();
 
         if state == KeyState::Pressed {
             let focus = self.niri.seat.get_keyboard().unwrap().current_focus();
@@ -413,6 +435,9 @@ impl State {
                 return;
             };
             self.agent_start_takeover(target);
+            if to_input_method {
+                return;
+            }
             self.agent().takeover.keys.push(code);
         } else {
             let keys = &mut self.agent().takeover.keys;

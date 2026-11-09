@@ -3485,8 +3485,9 @@ impl Niri {
         seat.add_pointer();
 
         #[cfg(feature = "agent")]
-        let mut agent = (!config_.agent.off)
-            .then(|| crate::agent::AgentState::new(&mut seat_state, &display_handle, &config_));
+        let mut agent = (!config_.agent.off).then(|| {
+            crate::agent::AgentState::new(&mut seat_state, &display_handle, &config_, &seat)
+        });
 
         let cursor_shape_manager_state = CursorShapeManagerState::new::<State>(&display_handle);
         let cursor_manager =

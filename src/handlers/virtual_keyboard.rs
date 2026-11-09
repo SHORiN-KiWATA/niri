@@ -147,6 +147,10 @@ impl State {
             event.time(),
             true,
         );
+
+        // Agent apps get the user's keys through the agent seat.
+        #[cfg(feature = "agent")]
+        self.agent_user_ime_key(event.key_code(), event.state(), event.time());
     }
 
     /// Activates the virtual keyboard's keymap on the current seat, unless it already is.
