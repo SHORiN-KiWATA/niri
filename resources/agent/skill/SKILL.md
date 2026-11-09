@@ -107,6 +107,7 @@ niri msg agent --require-change key --id 7 ctrl+s
 - 不关用户的窗口；不可撤销的操作（发送、付款、删除）要用户明确要求才做。
 - 你的剪贴板是独立的，`ctrl+c` 的内容谁都读不到。要拿内容，就截图，或让应用存成文件。
 - 锁屏期间照常工作，不要碰锁屏界面。
+- 用户可以直接点你开的窗口来接管它（键盘焦点离开就交还）。接管期间你的所有输入动作都会被拒绝，截图和 `agent-ui` 照常。遇到登录、验证码、付款确认这类该由用户做的步骤，就告诉用户窗口 id 请他接管，做完后切走并告诉你，你再继续。
 
 | 报错 | 处理 |
 |---|---|
@@ -115,3 +116,4 @@ niri msg agent --require-change key --id 7 ctrl+s
 | `no window appeared within 30 s` | 按上表加 profile 参数 |
 | `is a capture of window A, not window B` | 给目标窗口重新截图 |
 | `the agent seat is off` | 告诉用户，不要改配置 |
+| `the user took over window N` | 用户正在用这个窗口：停下，不要重试，等用户说好了再继续 |
